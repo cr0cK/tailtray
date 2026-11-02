@@ -329,6 +329,8 @@ The error text depends on the failure, checked in this order:
   transition notification. Failed refreshes before it do not count. The key expiry notification
   is not a transition and can be sent then.
 - A failed refresh is not a transition: the next good refresh is compared with the last good one.
+  A discarded refresh (see Reading the state) is ignored the same way: it is never the baseline,
+  never the previous refresh, and never sends a notification.
   "Previous" below means the last good refresh, and an Unavailable refresh is never compared.
 - **Connection lost**: the previous refresh was Connected and this one is not, and no action of
   Tailtray started in the last 30 seconds. The body is the new header label.
@@ -497,7 +499,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 **Scope**: spec section Notifications, and the **Notifications** preference and the `notifications` and `notified-key-expiries` settings keys of Preferences.
 
 **Acceptance**
-- Unit tests: a pure transition function over (previous good state, current state, last Tailtray action time, notified expiry pairs) for each notification, the baseline on the first successful refresh after failed ones, a failed refresh between two good ones, the 30-second action window, exit node A online to exit node B offline (no notification), and the pair list capped at 10.
+- Unit tests: a pure transition function over (previous good state, current state, last Tailtray action time, notified expiry pairs) for each notification, the baseline on the first successful refresh after failed ones, a failed refresh between two good ones, a discarded refresh between two good ones (skipped the same way, so a stale `Running` before a `down` sends no Connection lost), the 30-second action window, exit node A online to exit node B offline (no notification), and the pair list capped at 10.
 - Headless with the fake: each notification appears once in the message tray for its transition; none with the preference off; a key expiry notification is not repeated after restarting the shell, nor after switching accounts back and forth; the Login required notification is withdrawn once the state leaves it; activating any notification opens the menu (checked through Eval); the **Notifications** preference is still set after restarting the shell; after a notification is dismissed or activated, the next transition still notifies; withdrawing an already dismissed Login required notification logs no error.
 
 **Technical notes**
