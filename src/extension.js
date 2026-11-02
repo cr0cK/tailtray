@@ -10,11 +10,13 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+import {accountRows, currentTailnet} from './accounts.js';
 import {deviceRows} from './devices.js';
 import {Engine} from './engine.js';
 import {ADMIN_CONSOLE_URL} from './errors.js';
 import {CommandRunner} from './runner.js';
-import {headerModel, identityLine, panelIconModel, sectionsOf} from './status.js';
+import {setArguments, settingRows, SETTINGS} from './settings.js';
+import {headerModel, identityLine, panelIconModel, sectionsOf, separatorsOf} from './status.js';
 import {relativeTime} from './time.js';
 import {buildWarnings} from './warnings.js';
 
@@ -72,7 +74,21 @@ const KeepOpenMenuItem = GObject.registerClass(
         }
 
         activate(event) {
-            this._handler?.(event);
+            if (this.reactive)
+                this._handler?.(event);
+        }
+    });
+
+/**
+ * A switch row of a submenu. Activating it toggles the switch without closing the menu, which
+ * PopupSwitchMenuItem.activate() would do through its parent. setToggleState() emits `toggled`
+ * like a click does, so callers wrap their updates.
+ */
+const SettingItem = GObject.registerClass(
+    class SettingItem extends PopupMenu.PopupSwitchMenuItem {
+        activate(_event) {
+            if (this.reactive)
+                this.toggle();
         }
     });
 
@@ -94,7 +110,7 @@ const HeaderItem = GObject.registerClass(
         }
 
         activate(_event) {
-            if (this._switch.mapped)
+            if (this.reactive && this._switch.mapped)
                 this.toggle();
         }
 
@@ -173,6 +189,12 @@ export default class TailtrayExtension extends Extension {
         this._warningsMenu = null;
         this._deviceCaption = null;
         this._deviceItems = null;
+        this._accountMenu = null;
+        this._accountTailnet = null;
+        this._accountKey = null;
+        this._accountItems = null;
+        this._settingsMenu = null;
+        this._settingItems = null;
         this._separators = null;
         this._refreshItem = null;
         this._updatedLabel = null;
@@ -202,6 +224,7 @@ export default class TailtrayExtension extends Extension {
             if (open) {
                 // Relative times are stale after a while closed.
                 this._render(this._engine.model);
+                this._engine.menuOpened();
                 this._engine.requestRefresh();
             } else {
                 this._engine.menuClosed();
@@ -262,9 +285,10 @@ export default class TailtrayExtension extends Extension {
         this._warningsMenu = new PopupMenu.PopupSubMenuMenuItem('Warnings');
         menu.addMenuItem(this._warningsMenu);
 
-        // Separators: after the top group when This device follows, and before the footer.
+        // Separators: after the top group, after This device, and before the footer.
         this._separators = {
             top: new PopupMenu.PopupSeparatorMenuItem(),
+            device: new PopupMenu.PopupSeparatorMenuItem(),
             footer: new PopupMenu.PopupSeparatorMenuItem(),
         };
         menu.addMenuItem(this._separators.top);
@@ -277,6 +301,34 @@ export default class TailtrayExtension extends Extension {
             this._deviceItems[id] = this._copyRow('');
             menu.addMenuItem(this._deviceItems[id]);
         }
+
+        menu.addMenuItem(this._separators.device);
+
+        this._accountMenu = new PopupMenu.PopupSubMenuMenuItem('Account');
+        this._accountTailnet = dimLabel('', {x_expand: true, x_align: Clutter.ActorAlign.END});
+        // The arrow no longer takes the free space, so the tailnet sits right before it.
+        this._accountMenu._triangleBin.x_expand = false;
+        this._accountMenu.insert_child_below(this._accountTailnet, this._accountMenu._triangleBin);
+        this._accountItems = new Map();
+        menu.addMenuItem(this._accountMenu);
+
+        this._settingsMenu = new PopupMenu.PopupSubMenuMenuItem('Settings');
+        this._settingItems = {};
+        for (const {id, label} of SETTINGS) {
+            const item = new SettingItem(label, false);
+            item.connect('toggled', (_item, active) => {
+                if (this._rendering)
+                    return;
+                const detail = {flag: id, value: active};
+                const started = this._engine.runAction('set', setArguments(id, active), detail);
+                // Refused while another action runs: the switch goes back to what the model says.
+                if (!started)
+                    this._render(this._engine.model);
+            });
+            this._settingItems[id] = item;
+            this._settingsMenu.menu.addMenuItem(item);
+        }
+        menu.addMenuItem(this._settingsMenu);
 
         menu.addMenuItem(this._separators.footer);
 
@@ -374,14 +426,94 @@ export default class TailtrayExtension extends Extension {
         }
         this._deviceCaption.visible = rows.length > 0;
 
-        const topShown = identity !== '' || sections.loginHelp || sections.approvalHelp ||
-            error !== null || warnings.length > 0;
-        this._separators.top.visible = topShown && rows.length > 0;
+        // The profiles are listed once the first refresh answered, as the engine does.
+        const accountShown = sections.account && model.loaded;
+        this._renderAccount(model, accountShown);
+        this._renderSettings(model, sections.settings);
+
+        const separators = separatorsOf({
+            device: rows.length > 0,
+            controls: accountShown || sections.settings,
+        });
+        this._separators.top.visible = separators.top;
+        this._separators.device.visible = separators.device;
+        this._separators.footer.visible = separators.footer;
 
         const updated = model.updatedAt === null
             ? '' : relativeTime(new Date(model.updatedAt).toISOString(), now);
         this._updatedLabel.text = updated === '' ? '' : `updated ${updated}`;
         this._updatedLabel.visible = updated !== '';
+    }
+
+    _renderAccount(model, shown) {
+        this._accountMenu.visible = shown;
+        this._accountTailnet.text = currentTailnet(model.status, model.accounts.profiles);
+        const menu = this._accountMenu.menu;
+        const rows = accountRows(model.accounts, model.pending);
+
+        // Rows are rebuilt only when their content changed, so an open submenu stays open and a
+        // pending switch updates the row in place.
+        const key = JSON.stringify(
+            rows.message ?? rows.profiles.map(row => [row.id, row.title, row.account]));
+        if (key !== this._accountKey) {
+            this._accountKey = key;
+            menu.removeAll();
+            this._accountItems.clear();
+            if (rows.message) {
+                const item = new PopupMenu.PopupMenuItem(rows.message);
+                item.setSensitive(false);
+                menu.addMenuItem(item);
+            } else {
+                for (const row of rows.profiles) {
+                    const item = this._profileItem(row);
+                    this._accountItems.set(row.id, item);
+                    menu.addMenuItem(item);
+                }
+            }
+        }
+        for (const row of rows.profiles ?? []) {
+            const item = this._accountItems.get(row.id);
+            item.profileSelected = row.selected;
+            item.setOrnament(row.selected ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+            item.setSensitive(row.sensitive);
+            item.progressLabel.text = row.progress;
+            item.progressLabel.visible = row.progress !== '';
+        }
+    }
+
+    /** A profile row: the tailnet, the account under it, and the progress on its right. */
+    _profileItem(row) {
+        const item = new KeepOpenMenuItem();
+        const text = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        text.add_child(new St.Label({text: row.title}));
+        if (row.account !== '')
+            text.add_child(dimLabel(row.account, {style: 'font-size: 0.9em;'}));
+        item.add_child(text);
+        item.progressLabel = dimLabel('', {visible: false});
+        item.add_child(item.progressLabel);
+        item.profileSelected = row.selected;
+        // Activating the profile in use does nothing.
+        item.onActivate(() => {
+            if (!item.profileSelected)
+                this._engine.runAction('switch', ['switch', row.id], {id: row.id});
+        });
+        return item;
+    }
+
+    _renderSettings(model, shown) {
+        this._settingsMenu.visible = shown;
+        // Updating a switch from a refresh must not look like the user's toggle.
+        this._rendering = true;
+        for (const row of settingRows(model.prefs, model.pending)) {
+            const item = this._settingItems[row.id];
+            item.setToggleState(row.value);
+            item.setSensitive(row.sensitive);
+        }
+        this._rendering = false;
     }
 
     _renderPanel(model, headerLabel) {

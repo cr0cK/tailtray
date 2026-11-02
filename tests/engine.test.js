@@ -11,19 +11,31 @@ const STATUS = {
     login: fixture('status-needs-login.json'),
     approval: fixture('status-needs-approval.json'),
 };
+const GET = fixture('get.json');
+const PROFILES = fixture('switch-list.json');
 const ok = (stdout = '') => ({exitCode: 0, stdout, stderr: ''});
 const fail = (stderr, fields = {}) => ({exitCode: 1, stdout: '', stderr, ...fields});
 
-/** An engine whose commands and timers the test resolves by hand. */
-function setup({interval = 10} = {}) {
+/**
+ * An engine whose commands and timers the test resolves by hand. `get --json` answers by itself
+ * with `env.get`, unless `manualGet` is set; those reads land in `gets`, not in `calls`.
+ */
+function setup({interval = 10, manualGet = false} = {}) {
     const calls = [];
+    const gets = [];
     const timers = [];
     const changes = [];
     let nextId = 1;
-    const env = {interval, now: 1_000_000};
+    const env = {interval, now: 1_000_000, get: ok(GET)};
     const engine = new Engine({
         run: (args, timeout) => new Promise(resolve => {
-            calls.push({args, timeout, resolve, name: args.join(' ')});
+            const name = args.join(' ');
+            if (name === 'get --json' && !manualGet) {
+                gets.push({args, timeout});
+                resolve(env.get);
+                return;
+            }
+            calls.push({args, timeout, resolve, name});
         }),
         setTimer: (ms, callback) => {
             const timer = {id: nextId++, ms};
@@ -55,7 +67,7 @@ function setup({interval = 10} = {}) {
         await tick();
     };
     const pending = name => calls.filter(entry => entry.name === name && !entry.done).length;
-    return {engine, calls, timers, changes, env, answer, pending, tick, model: () => engine.model};
+    return {engine, calls, gets, timers, changes, env, answer, pending, tick, model: () => engine.model};
 }
 
 test('the first refresh runs status --json when the engine starts', async () => {
@@ -376,4 +388,308 @@ test('a refresh answered with the same state still notifies the view', async () 
     t.timers[0].callback();
     await t.answer('status --json', ok(STATUS.running));
     assert.equal(t.changes.length, seen + 1);
+});
+
+// --- Preferences: tailscale get --json -------------------------------------------------------
+
+const STATUS_CONNECTING = fixture('status-connecting.json');
+const names = t => t.calls.map(call => call.name);
+
+test('get --json runs after status --json when the backend is Running or Stopped', async () => {
+    for (const state of ['running', 'stopped']) {
+        const t = setup({manualGet: true});
+        t.engine.start();
+        await t.answer('status --json', ok(STATUS[state]));
+        assert.deepEqual(names(t), ['status --json', 'get --json']);
+        assert.equal(t.calls[1].timeout, 30);
+        assert.equal(t.model().loaded, false);
+        await t.answer('get --json', ok(GET));
+        assert.equal(t.model().loaded, true);
+        assert.equal(t.model().prefs['accept-dns'], true);
+    }
+});
+
+test('get --json is not called in the other states, nor when status failed', async () => {
+    const answers = [
+        ok(STATUS.login), ok(STATUS.approval), ok(STATUS_CONNECTING), fail('failed to connect to local tailscaled'),
+        {missing: true, exitCode: -1, stdout: '', stderr: ''}, ok('not json'),
+    ];
+    for (const answer of answers) {
+        const t = setup({manualGet: true});
+        t.engine.start();
+        await t.answer('status --json', answer);
+        assert.deepEqual(names(t), ['status --json']);
+        assert.equal(t.model().prefs, null);
+    }
+});
+
+test('only one refresh runs at a time, get included', async () => {
+    const t = setup({manualGet: true});
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    t.engine.requestRefresh();
+    t.engine.requestRefresh();
+    assert.deepEqual(names(t), ['status --json', 'get --json']);
+    await t.answer('get --json', ok(GET));
+    assert.deepEqual(names(t), ['status --json', 'get --json', 'status --json']);
+});
+
+test('a failing get keeps the state, empties the preferences, and shows no error', async () => {
+    const t = setup();
+    t.env.get = fail('boom');
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().state.id, 'connected');
+    assert.equal(t.model().prefs, null);
+    assert.equal(t.model().refreshError, null);
+    assert.equal(t.model().actionError, null);
+    // A later good read brings the values back.
+    t.env.get = ok(GET);
+    t.timers[0].callback();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().prefs['shields-up'], false);
+});
+
+test('a get that prints garbage or times out empties the preferences', async () => {
+    for (const reply of [ok('not json'), {timedOut: true, exitCode: -1, stdout: '', stderr: ''}]) {
+        const t = setup();
+        t.env.get = reply;
+        t.engine.start();
+        await t.answer('status --json', ok(STATUS.running));
+        assert.equal(t.model().state.id, 'connected');
+        assert.equal(t.model().prefs, null);
+    }
+});
+
+test('a refresh known to be discarded does not read the preferences', async () => {
+    const t = setup({manualGet: true});
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    await t.answer('get --json', ok(GET));
+    t.engine.requestRefresh();
+    t.engine.runAction('down', ['down']);
+    await t.answer('down', ok());
+    await t.answer('status --json', ok(STATUS.running));
+    // The periodic read started before the command ended: no get for it, only for the follow-up.
+    assert.deepEqual(names(t).filter(name => name === 'get --json'), ['get --json']);
+    await t.answer('status --json', ok(STATUS.stopped));
+    await t.answer('get --json', ok(GET));
+    assert.equal(t.model().pending, null);
+    assert.equal(t.model().state.id, 'disconnected');
+});
+
+test('an action started while get runs discards that refresh', async () => {
+    const t = setup({manualGet: true});
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    t.engine.runAction('set', ['set', '--shields-up=true'], {flag: 'shields-up', value: true});
+    await t.answer('get --json', ok('{"shields-up": false}'));
+    assert.equal(t.model().loaded, false);
+    assert.deepEqual(t.model().pending, {kind: 'set', flag: 'shields-up', value: true});
+});
+
+test('the follow-up of a set shows the values get returns', async () => {
+    const t = setup();
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().prefs['shields-up'], false);
+    assert.equal(t.engine.runAction('set', ['set', '--shields-up=true'], {flag: 'shields-up', value: true}), true);
+    assert.deepEqual(t.model().pending, {kind: 'set', flag: 'shields-up', value: true});
+    await t.answer('set --shields-up=true', fail('boom'));
+    // A periodic refresh that completes now leaves the progress and the old values alone.
+    t.engine.requestRefresh();
+    assert.deepEqual(t.model().pending, {kind: 'set', flag: 'shields-up', value: true});
+    // A killed set is not rolled back: the read may show the requested value.
+    t.env.get = ok('{"shields-up": true}');
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().pending, null);
+    assert.equal(t.model().prefs['shields-up'], true);
+    assert.equal(t.model().actionError.text, 'boom');
+});
+
+test('a get that fails after a set leaves the switches without a value', async () => {
+    const t = setup();
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    t.engine.runAction('set', ['set', '--accept-dns=false'], {flag: 'accept-dns', value: false});
+    await t.answer('set --accept-dns=false', ok());
+    t.env.get = fail('boom');
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().pending, null);
+    assert.equal(t.model().prefs, null);
+    assert.equal(t.model().state.id, 'connected');
+    assert.equal(t.model().actionError, null);
+});
+
+// --- Account: tailscale switch --list --json -------------------------------------------------
+
+const listCalls = t => t.calls.filter(call => call.name === 'switch --list --json');
+
+async function openMenu(t, state = STATUS.running) {
+    t.engine.start();
+    await t.answer('status --json', ok(state));
+    t.engine.menuOpened();
+}
+
+test('the profiles are listed once when the menu opens, and not by the refreshes', async () => {
+    const t = setup();
+    await openMenu(t);
+    assert.equal(listCalls(t).length, 1);
+    assert.equal(listCalls(t)[0].timeout, 30);
+    assert.deepEqual(t.model().accounts, {profiles: null, loading: true, failed: false});
+    await t.answer('switch --list --json', ok(PROFILES));
+    assert.equal(t.model().accounts.loading, false);
+    assert.equal(t.model().accounts.profiles.length, 2);
+    for (let i = 0; i < 3; i++) {
+        t.engine.requestRefresh();
+        await t.answer('status --json', ok(STATUS.running));
+    }
+    assert.equal(listCalls(t).length, 1);
+    // Closing and opening again lists once more.
+    t.engine.menuClosed();
+    t.engine.menuOpened();
+    assert.equal(listCalls(t).length, 2);
+});
+
+test('opening the menu before the first answer lists the profiles once that answer shows them', async () => {
+    const t = setup();
+    t.engine.start();
+    t.engine.menuOpened();
+    assert.equal(listCalls(t).length, 0);
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(listCalls(t).length, 1);
+});
+
+test('the profiles are listed in Disconnected and Connecting, not in the blocked states', async () => {
+    const cases = [[STATUS.stopped, 1], [STATUS_CONNECTING, 1], [STATUS.login, 0], [STATUS.approval, 0]];
+    for (const [state, listed] of cases) {
+        const t = setup();
+        await openMenu(t, state);
+        assert.equal(listCalls(t).length, listed);
+    }
+    const t = setup();
+    t.engine.start();
+    await t.answer('status --json', fail('failed to connect to local tailscaled'));
+    t.engine.menuOpened();
+    assert.equal(listCalls(t).length, 0);
+});
+
+test('the previous profiles stay while a later list runs, and a failure leaves none', async () => {
+    const t = setup();
+    await openMenu(t);
+    await t.answer('switch --list --json', ok(PROFILES));
+    t.engine.menuClosed();
+    t.engine.menuOpened();
+    assert.deepEqual(t.model().accounts.loading, true);
+    assert.equal(t.model().accounts.profiles.length, 2);
+    await t.answer('switch --list --json', fail('boom'));
+    assert.deepEqual(t.model().accounts, {profiles: null, loading: false, failed: true});
+    // Another request starts from Loading… again, not from the failure.
+    t.engine.menuClosed();
+    t.engine.menuOpened();
+    assert.deepEqual(t.model().accounts, {profiles: null, loading: true, failed: false});
+    await t.answer('switch --list --json', ok('not json'));
+    assert.equal(t.model().accounts.failed, true);
+});
+
+test('only the newest list reply counts', async () => {
+    const t = setup();
+    await openMenu(t);
+    t.engine.menuClosed();
+    t.engine.menuOpened();
+    assert.equal(listCalls(t).length, 2);
+    await t.answer('switch --list --json', fail('first'));
+    assert.equal(t.model().accounts.loading, true);
+    assert.equal(t.model().accounts.failed, false);
+    await t.answer('switch --list --json', ok(PROFILES));
+    assert.equal(t.model().accounts.profiles.length, 2);
+});
+
+test('a switch lists the profiles again once its follow-up answered', async () => {
+    const t = setup();
+    await openMenu(t);
+    await t.answer('switch --list --json', ok(PROFILES));
+    assert.equal(t.engine.runAction('switch', ['switch', '3c4d'], {id: '3c4d'}), true);
+    assert.deepEqual(t.model().pending, {kind: 'switch', id: '3c4d'});
+    await t.answer('switch 3c4d', ok());
+    assert.equal(listCalls(t).length, 1);
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().pending, null);
+    assert.equal(listCalls(t).length, 2);
+    await t.answer('switch --list --json', ok(PROFILES.replace('"selected": true', '"selected": null')));
+    assert.equal(t.model().accounts.loading, false);
+});
+
+test('a switch lists the profiles again even when the menu is closed', async () => {
+    const t = setup();
+    await openMenu(t);
+    await t.answer('switch --list --json', ok(PROFILES));
+    t.engine.runAction('switch', ['switch', '3c4d'], {id: '3c4d'});
+    t.engine.menuClosed();
+    await t.answer('switch 3c4d', ok());
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(listCalls(t).length, 2);
+});
+
+test('an action that is not a switch does not list the profiles', async () => {
+    const t = setup();
+    await openMenu(t);
+    await t.answer('switch --list --json', ok(PROFILES));
+    t.engine.runAction('set', ['set', '--accept-dns=false'], {flag: 'accept-dns', value: false});
+    await t.answer('set --accept-dns=false', ok());
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(listCalls(t).length, 1);
+});
+
+test('a failing switch whose follow-up reads Login required lists nothing until Running returns', async () => {
+    for (const blocked of [STATUS.login, STATUS.approval]) {
+        const t = setup();
+        await openMenu(t);
+        await t.answer('switch --list --json', ok(PROFILES));
+        t.engine.runAction('switch', ['switch', '3c4d'], {id: '3c4d'});
+        await t.answer('switch 3c4d', fail('needs login'));
+        await t.answer('status --json', ok(blocked));
+        assert.equal(t.model().actionError, null);
+        assert.equal(listCalls(t).length, 1);
+        // Back to Running with the menu still open and no new action: no error, one list.
+        t.engine.requestRefresh();
+        await t.answer('status --json', ok(STATUS.running));
+        assert.equal(t.model().actionError, null);
+        assert.equal(listCalls(t).length, 2);
+        t.engine.requestRefresh();
+        await t.answer('status --json', ok(STATUS.running));
+        assert.equal(listCalls(t).length, 2);
+    }
+});
+
+test('in Login required, opening the menu lists nothing', async () => {
+    const t = setup();
+    await openMenu(t, STATUS.login);
+    t.engine.menuClosed();
+    t.engine.menuOpened();
+    assert.equal(listCalls(t).length, 0);
+});
+
+test('a list reply that arrives after destroy changes nothing', async () => {
+    const t = setup();
+    await openMenu(t);
+    const seen = t.changes.length;
+    t.engine.destroy();
+    await t.answer('switch --list --json', ok(PROFILES));
+    assert.equal(t.changes.length, seen);
+    assert.equal(t.model().accounts.profiles, null);
+    t.engine.menuOpened();
+    assert.equal(listCalls(t).length, 1);
+});
+
+test('a refresh that is discarded does not list the profiles', async () => {
+    const t = setup();
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.login));
+    t.engine.menuOpened();
+    t.engine.runAction('up', ['up']);
+    t.engine.requestRefresh();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().state.id, 'login');
+    assert.equal(listCalls(t).length, 0);
 });

@@ -168,7 +168,8 @@ pointer_click "$HL_EXT._header.label"
 wait_model "m.state.id === 'disconnected' && m.pending === null"
 check "clicking the row ran down" test "$(fake_calls | awk '$1=="up"||$1=="down"' | tr '\n' ',')" = "up up,down down,"
 check "the menu stays open after the second toggle" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
-check "no refresh ran a command" test "$(fake_calls | awk '$1!="status"' | wc -l)" = 2
+check "no refresh ran a command" \
+    test "$(fake_calls | awk '$1!="status"&&$1!="get"&&$1!="switch-list"' | wc -l)" = 2
 check "tailscale login was never called" test "$(fake_calls | awk '$1=="unknown"' | wc -l)" = 0
 
 refresh_now
@@ -185,7 +186,8 @@ check "copying puts the address in the clipboard" test "$(clipboard_text)" = 100
 check "copying closes the menu" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = false
 check "copying shows the OSD" test "$(shell_eval "Main.osdWindowManager._osdWindows.some(w => w.visible)")" = true
 screenshot "$SHOTS/osd-copied.png"
-check "copying runs no command" test "$(fake_calls | awk '$1!="status"&&$1!="up"&&$1!="down"' | wc -l)" = 0
+check "copying runs no command" \
+    test "$(fake_calls | awk '$1!="status"&&$1!="get"&&$1!="switch-list"&&$1!="up"&&$1!="down"' | wc -l)" = 0
 sleep 2
 
 # --- Actions ----------------------------------------------------------------------------------
@@ -304,6 +306,271 @@ shell_eval "Gio.AppInfo.launch_default_for_uri = () => { throw new Error('no han
 pointer_click "$HL_EXT._errorSection._getMenuItems()[1]"
 check "a failing launch is caught and the shell keeps working" test "$(model state.id)" = unavailable
 menu_close
+
+# --- Account and Settings ---------------------------------------------------------------------
+action_calls() {
+    fake_calls | awk '$1=="up"||$1=="down"||$1=="set"||$1=="switch"' | tr '\n' ','
+}
+
+# The sensitivity (reactive) and the check mark of a profile row, and the value of a switch row.
+profile_item() { echo "$HL_EXT._accountItems.get('$1')"; }
+setting_item() { echo "$HL_EXT._settingItems['$1']"; }
+
+open_submenu() {
+    shell_eval "$HL_EXT.$1.menu.open(false); 'ok'" >/dev/null
+    sleep 0.7
+}
+
+begin "Account: profiles, switching, one list per opening"
+menu_open
+wait_model "!m.accounts.loading"
+check "the profiles were requested once for this opening" test "$(fake_count switch-list)" = 1
+check "the Account row shows the current tailnet" test "$(menu_texts | grep -c 'Account|example.org')" = 1
+open_submenu _accountMenu
+check "both profiles are listed, the account under each tailnet" \
+    test "$(menu_texts | grep -c 'example.org|alex@example.org|example.net|alex@example.net')" = 1
+check "the selected profile has the check mark" \
+    test "$(shell_eval "$(profile_item 1a2b).profileSelected && !$(profile_item 3c4d).profileSelected")" = true
+open_submenu _settingsMenu
+menu_shot "$SHOTS/menu-account-settings-open.png"
+# One submenu is open at a time: opening Account again closes Settings.
+open_submenu _accountMenu
+menu_shot "$SHOTS/menu-account-open.png"
+for _ in 1 2 3; do refresh_now; sleep 0.5; done
+check "refreshes do not list the profiles" test "$(fake_count switch-list)" = 1
+check "a refresh keeps the Account submenu open" test "$(shell_eval "$HL_EXT._accountMenu.menu.isOpen")" = true
+shell_eval "$(profile_item 1a2b).activate(null); 'ok'" >/dev/null
+sleep 0.5
+check "activating the selected profile runs nothing" test "$(action_calls)" = ""
+pointer_click "$(profile_item 3c4d)"
+wait_model "m.pending === null && !m.accounts.loading" 10
+check "clicking another profile ran switch <id>" test "$(action_calls)" = "switch switch 3c4d,"
+check "the menu stays open" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
+check "the profiles were listed once more after the switch" test "$(fake_count switch-list)" = 2
+check "the new profile is checked" \
+    test "$(shell_eval "$(profile_item 3c4d).profileSelected && !$(profile_item 1a2b).profileSelected")" = true
+check "the Account submenu stayed open through the switch" \
+    test "$(shell_eval "$HL_EXT._accountMenu.menu.isOpen")" = true
+menu_close
+menu_open
+wait_model "!m.accounts.loading"
+check "reopening the menu lists once more" test "$(fake_count switch-list)" = 3
+check "and nothing else ran" test "$(fake_calls | awk '$1=="set"||$1=="up"||$1=="down"' | wc -l)" = 0
+menu_close
+
+begin "Account: Loading…, previous profiles while loading, Could not list accounts"
+fake_set switch-list.sleep 3
+menu_open
+open_submenu _accountMenu
+check "Loading… while the first answer sleeps" test "$(menu_texts | grep -c 'Loading…')" = 1
+check "the Loading… row is insensitive" \
+    test "$(shell_eval "$HL_EXT._accountMenu.menu._getMenuItems()[0].reactive")" = false
+menu_shot "$SHOTS/menu-account-loading.png"
+wait_model "!m.accounts.loading" 10
+check "the profiles replace it" test "$(menu_texts | grep -c 'alex@example.net')" = 1
+menu_close
+menu_open
+open_submenu _accountMenu
+check "the previous profiles show while a later answer sleeps" test "$(menu_texts | grep -c 'alex@example.net')" = 1
+check "they are insensitive" test "$(shell_eval "$(profile_item 3c4d).reactive")" = false
+menu_shot "$SHOTS/menu-account-reloading.png"
+wait_model "!m.accounts.loading" 10
+check "and sensitive again once it answered" test "$(shell_eval "$(profile_item 3c4d).reactive")" = true
+fake_unset switch-list.sleep
+fake_set switch-list.fail 1
+menu_close
+menu_open
+open_submenu _accountMenu
+wait_model "!m.accounts.loading" 10
+check "a failing list shows a single insensitive row" test "$(menu_texts | grep -c 'Could not list accounts')" = 1
+check "no profile is left" test "$(menu_texts | grep -c 'alex@example.net')" = 0
+check "the row is insensitive" \
+    test "$(shell_eval "$HL_EXT._accountMenu.menu._getMenuItems()[0].reactive")" = false
+check "the failure is not an error block" test "$(model actionError)" = null
+menu_shot "$SHOTS/menu-account-failed.png"
+menu_close
+
+begin "A slow switch locks every action row and shows Switching…"
+fake_set switch.sleep 3
+menu_open
+wait_model "!m.accounts.loading"
+open_submenu _accountMenu
+shell_eval "$(profile_item 3c4d).activate(null); 'ok'" >/dev/null
+sleep 1
+check "the chosen profile shows Switching…" test "$(shell_eval "$(profile_item 3c4d).progressLabel.text")" = "Switching…"
+check "the other profile shows nothing" test "$(shell_eval "$(profile_item 1a2b).progressLabel.visible")" = false
+check "the profile rows are insensitive" \
+    test "$(shell_eval "!$(profile_item 1a2b).reactive && !$(profile_item 3c4d).reactive")" = true
+check "the three switches are insensitive" \
+    test "$(shell_eval "Object.values($HL_EXT._settingItems).every(item => !item.reactive)")" = true
+check "so is the header switch" test "$(shell_eval "$HL_EXT._header.reactive")" = false
+shell_eval "$(profile_item 1a2b).activate(null); $(setting_item shields-up).activate(null);
+    $HL_EXT._header.activate(null); $(profile_item 3c4d).activate(null); 'ok'" >/dev/null
+sleep 0.3
+menu_shot "$SHOTS/menu-switching.png"
+refresh_now
+sleep 1
+check "a periodic refresh that completes meanwhile leaves Switching… in place" \
+    test "$(shell_eval "$(profile_item 3c4d).progressLabel.text")" = "Switching…"
+wait_model "m.pending === null" 10
+check "no second action command reached the fake" test "$(action_calls)" = "switch switch 3c4d,"
+check "the follow-up ended the progress" test "$(shell_eval "$(profile_item 3c4d).progressLabel.visible")" = false
+menu_close
+
+begin "A refresh in flight when the switch ends cannot end the progress"
+fake_set status.sleep 2
+menu_open
+wait_model "!m.accounts.loading"
+refresh_now
+sleep 0.3
+shell_eval "$(profile_item 3c4d).activate(null); 'ok'" >/dev/null
+sleep 1.2
+check "the switch command ended" test "$(model pending.kind)" = switch
+sleep 1.5
+# The stale refresh answered at about 2 s and was discarded; the follow-up sleeps until about 4 s.
+check "its answer left Switching… and the locks in place" \
+    test "$(shell_eval "$(profile_item 3c4d).progressLabel.text + '|' + $(profile_item 3c4d).reactive")" = "Switching…|false"
+wait_model "m.pending === null" 10
+check "the follow-up's answer ended them" test "$(shell_eval "$(profile_item 3c4d).reactive")" = true
+fake_unset status.sleep
+menu_close
+
+for pair in needs-login:login needs-approval:approval; do
+    blocked=${pair%%:*}
+    expected=${pair##*:}
+    begin "A failing switch whose follow-up reads $blocked"
+    fake_set switch.fail 1
+    fake_set switch.stderr "profile needs login"
+    menu_open
+    wait_model "!m.accounts.loading"
+    before=$(fake_count switch-list)
+    fake_state "$blocked"
+    shell_eval "$(profile_item 3c4d).activate(null); 'ok'" >/dev/null
+    wait_model "m.pending === null && m.state.id !== 'connected'" 10
+    check "the menu shows $expected and no error block" \
+        test "$(model state.id)|$(model actionError)" = "$expected|null"
+    check "the profiles were not listed while the section is hidden" test "$(fake_count switch-list)" = "$before"
+    menu_close
+    menu_open
+    check "opening the menu lists nothing" test "$(fake_count switch-list)" = "$before"
+    fake_unset switch.fail
+    fake_state running
+    refresh_now
+    wait_model "m.state.id === 'connected'"
+    sleep 0.5
+    check "Running again with the menu open shows no error block" \
+        test "$(menu_texts | grep -c 'profile needs login')" = 0
+    check "and lists the profiles once" test "$(fake_count switch-list)" = $((before + 1))
+    menu_close
+done
+
+begin "Settings: each switch runs set, the menu stays open, values follow get"
+menu_open
+open_submenu _settingsMenu
+check "the switches show the values get returned" \
+    test "$(shell_eval "['accept-routes', 'accept-dns', 'shields-up'].map(id => $HL_EXT._settingItems[id].state).join()")" = "false,true,false"
+menu_shot "$SHOTS/menu-settings-open.png"
+pointer_click "$(setting_item accept-routes)"
+wait_model "m.pending === null" 10
+pointer_click "$(setting_item accept-dns)"
+wait_model "m.pending === null" 10
+shell_eval "$(setting_item shields-up).activate(null); 'ok'" >/dev/null
+wait_model "m.pending === null" 10
+check "each switch ran set --<flag>=<value>" test "$(action_calls)" = \
+    "set set --accept-routes=true,set set --accept-dns=false,set set --shields-up=true,"
+check "the menu stays open" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
+check "the Settings submenu stays open" test "$(shell_eval "$HL_EXT._settingsMenu.menu.isOpen")" = true
+check "the switches show what get returns" \
+    test "$(shell_eval "['accept-routes', 'accept-dns', 'shields-up'].map(id => $HL_EXT._settingItems[id].state).join()")" = "true,false,true"
+check "no refresh ran a set" test "$(fake_calls | awk '$1=="set"' | wc -l)" = 3
+refresh_now
+sleep 0.7
+check "a refresh calls no command" test "$(fake_calls | awk '$1=="set"' | wc -l)" = 3
+menu_close
+
+begin "A switch shows the requested value while its set runs, then what get returns"
+fake_set set.sleep 2
+menu_open
+open_submenu _settingsMenu
+shell_eval "$(setting_item shields-up).activate(null); 'ok'" >/dev/null
+sleep 0.8
+check "the requested value shows at once" test "$(shell_eval "$(setting_item shields-up).state")" = true
+check "the switches are insensitive meanwhile" \
+    test "$(shell_eval "Object.values($HL_EXT._settingItems).every(item => !item.reactive)")" = true
+menu_shot "$SHOTS/menu-settings-setting.png"
+wait_model "m.pending === null" 10
+fake_unset set.sleep
+check "the new value stays when set worked" test "$(shell_eval "$(setting_item shields-up).state")" = true
+check "and the switches are sensitive again" test "$(shell_eval "$(setting_item shields-up).reactive")" = true
+fake_set set.fail 1
+fake_set set.stderr "boom"
+fake_set set.noeffect 1
+shell_eval "$(setting_item accept-dns).activate(null); 'ok'" >/dev/null
+wait_model "m.pending === null && m.actionError !== null" 10
+check "a set that failed without changing it shows the old value" test "$(shell_eval "$(setting_item accept-dns).state")" = true
+check "and its error" test "$(model actionError.text)" = boom
+fake_unset set.fail
+fake_unset set.noeffect
+fake_set get.fail 1
+shell_eval "$(setting_item accept-dns).activate(null); 'ok'" >/dev/null
+wait_model "m.pending === null" 10
+check "a get that fails after the set makes the switches insensitive" \
+    test "$(shell_eval "Object.values($HL_EXT._settingItems).every(item => !item.reactive)")" = true
+menu_close
+
+begin "A failing get keeps Connected, makes the switches insensitive and shows no error"
+fake_set get.fail 1
+fake_set get.stderr "get is broken"
+refresh_now
+wait_model "m.prefs === null && m.loaded"
+menu_open
+open_submenu _settingsMenu
+check "the state is still Connected" test "$(model state.id)" = connected
+check "the three switches are insensitive" \
+    test "$(shell_eval "Object.values($HL_EXT._settingItems).every(item => !item.reactive)")" = true
+check "no error block" test "$(menu_texts | grep -c 'get is broken')" = 0
+menu_shot "$SHOTS/menu-settings-unreadable.png"
+fake_unset get.fail
+refresh_now
+wait_model "m.prefs !== null"
+check "a good read brings the switches back" test "$(shell_eval "$(setting_item accept-dns).reactive")" = true
+menu_close
+
+begin "Closing the menu while the refresh after a failing set sleeps shows no error later"
+fake_set set.fail 1
+fake_set set.stderr "Access denied: prefs write access denied"
+fake_set status.sleep 2
+menu_open
+open_submenu _settingsMenu
+shell_eval "$(setting_item shields-up).activate(null); 'ok'" >/dev/null
+sleep 0.6
+menu_close
+wait_model "m.pending === null" 10
+fake_unset status.sleep
+menu_open
+check "reopening shows no error block" test "$(menu_texts | grep -c 'operator')" = 0
+menu_close
+
+begin "Sections per state: Disconnected has Account and Settings, Connecting only Account"
+show stopped disconnected
+menu_open
+wait_model "!m.accounts.loading"
+check "Disconnected shows Account and Settings, not This device" \
+    test "$(shell_eval "[$HL_EXT._accountMenu.visible, $HL_EXT._settingsMenu.visible, $HL_EXT._deviceCaption.visible].join()")" = "true,true,false"
+menu_shot "$SHOTS/menu-disconnected-account-settings.png"
+menu_close
+show connecting connecting
+menu_open
+check "Connecting shows Account but not Settings" \
+    test "$(shell_eval "$HL_EXT._accountMenu.visible + '|' + $HL_EXT._settingsMenu.visible")" = "true|false"
+menu_shot "$SHOTS/menu-connecting-account.png"
+menu_close
+gets=$(fake_count get)
+refresh_now
+sleep 1
+check "get is not called in Connecting" test "$(fake_count get)" = "$gets"
+show running connected
+check "get is called again in Connected" test "$(fake_count get)" -gt "$gets"
 
 # --- Reading the state ------------------------------------------------------------------------
 begin "Refresh rules"

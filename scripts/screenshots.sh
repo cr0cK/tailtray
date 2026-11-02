@@ -16,7 +16,8 @@ OUT=$HL_ROOT/docs/screenshots
 mkdir -p "$OUT"
 headless_boot
 
-# Captures the whole screen with the menu open, and widens MENU_LEFT and MENU_BOTTOM, the edges
+# Captures the whole screen with the menu open, with the submenu named by $2 (an extension
+# property such as _accountMenu) expanded when given, and widens MENU_LEFT and MENU_BOTTOM, the edges
 # that crop_menus later applies to every menu capture.
 MENU_LEFT=999999
 MENU_BOTTOM=0
@@ -24,6 +25,12 @@ capture_menu() {
     local area left bottom
     pointer_park
     menu_open
+    if [[ -n ${2:-} ]]; then
+        # One submenu is open at a time. The account list is requested when the menu opens.
+        wait_model "!m.accounts.loading"
+        shell_eval "$HL_EXT.$2.menu.open(false); 'ok'" >/dev/null
+        sleep 1
+    fi
     area=$(shell_eval "const a = $HL_EXT._indicator.menu.actor;
         const [x, y] = a.get_transformed_position(); const [, h] = a.get_transformed_size();
         [Math.max(0, Math.floor(x) - 24), Math.min(global.stage.height, Math.ceil(y + h) + 24)].join(' ')")
@@ -55,7 +62,11 @@ show stopped disconnected
 capture_menu menu-disconnected.png
 show needs-login login
 capture_menu menu-login-required.png
-crop_menus menu-connected.png menu-disconnected.png menu-login-required.png
+show running connected
+capture_menu menu-account.png _accountMenu
+capture_menu menu-settings.png _settingsMenu
+crop_menus menu-connected.png menu-disconnected.png menu-login-required.png menu-account.png \
+    menu-settings.png
 
 # Drop metadata such as creation time so unchanged screenshots stay byte-identical.
 for image in "$OUT"/*.png; do

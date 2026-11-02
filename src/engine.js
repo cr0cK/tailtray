@@ -1,5 +1,7 @@
+import {parseProfiles} from './accounts.js';
 import {describeFailure} from './errors.js';
-import {readStatus, STATES} from './status.js';
+import {parsePrefs} from './settings.js';
+import {readStatus, sectionsOf, STATES} from './status.js';
 
 export const COMMAND_TIMEOUT_SECONDS = 30;
 
@@ -31,10 +33,19 @@ export class Engine {
         this._generation = 0;
         this._pending = null;
         this._timer = null;
+        this._menuOpen = false;
+        // Whether the Account section is shown in an open menu, and the request that counts.
+        this._accountsActive = false;
+        this._accountsSeq = 0;
         this._model = {
             loaded: false,
             state: STATES.connecting,
             status: null,
+            // The boolean preferences of `tailscale get --json`, or null when it was not read.
+            prefs: null,
+            // The profiles of the last `switch --list --json` answer, or null when there was
+            // none or it failed.
+            accounts: {profiles: null, loading: false, failed: false},
             refreshError: null,
             actionError: null,
             pending: null,
@@ -63,10 +74,20 @@ export class Engine {
         this._request(false);
     }
 
+    /** The menu opened: the Account section, if shown, lists the profiles once. */
+    menuOpened() {
+        if (this._destroyed)
+            return;
+        this._menuOpen = true;
+        this._syncAccounts(false);
+    }
+
     /** The menu closed: an error never appears in a later opening. */
     menuClosed() {
         if (this._destroyed)
             return;
+        this._menuOpen = false;
+        this._accountsActive = false;
         // The pending action's error is dropped too, including one that has not happened yet.
         if (this._pending) {
             this._pending.error = null;
@@ -80,15 +101,17 @@ export class Engine {
 
     /**
      * Runs one action, a `tailscale` command that changes the state. Returns false when it is
-     * refused because another action is pending. `kind` is 'up' or 'down' for the header switch.
+     * refused because another action is pending. `kind` is 'up' or 'down' for the header switch,
+     * 'switch' for an account and 'set' for a preference; `detail` (`{id}` or `{flag, value}`)
+     * is what the menu shows of its progress.
      */
-    runAction(kind, args) {
+    runAction(kind, args, detail = {}) {
         if (this._destroyed || this._pending)
             return false;
         this._generation++;
         this._pending = {kind, error: null, errorDropped: false};
         this._model.actionError = null;
-        this._model.pending = {kind};
+        this._model.pending = {kind, ...detail};
         this._emit();
         this._deps.run(args, COMMAND_TIMEOUT_SECONDS).then(result => {
             if (this._destroyed)
@@ -118,16 +141,24 @@ export class Engine {
         this._refreshing = true;
         this._clearTimer();
         const generation = this._generation;
-        const result = await this._deps.run(['status', '--json'], COMMAND_TIMEOUT_SECONDS);
+        const read = readStatus(await this._deps.run(['status', '--json'], COMMAND_TIMEOUT_SECONDS));
         if (this._destroyed)
             return;
-        this._refreshing = false;
-
         // While an action is pending only its follow-up counts, and a refresh that started
         // before the last step of an action never shows the state from before it.
-        const counts = generation === this._generation && (this._pending === null || followUp);
-        if (counts)
-            this._apply(readStatus(result), followUp);
+        const counts = () => generation === this._generation && (this._pending === null || followUp);
+        // The preferences are read after the status, only when the state has Settings to show,
+        // and not at all when the refresh is already known to be discarded.
+        let prefs = null;
+        if (read.ok && counts() && sectionsOf(read.state).settings) {
+            prefs = parsePrefs(await this._deps.run(['get', '--json'], COMMAND_TIMEOUT_SECONDS));
+            if (this._destroyed)
+                return;
+        }
+        this._refreshing = false;
+
+        if (counts())
+            this._apply(read, prefs, followUp);
 
         const queued = this._queued;
         this._queued = null;
@@ -141,23 +172,58 @@ export class Engine {
         });
     }
 
-    _apply(read, followUp) {
+    _apply(read, prefs, followUp) {
         const model = this._model;
+        const switched = followUp && this._pending?.kind === 'switch';
         if (read.ok) {
             model.loaded = true;
             model.state = read.state;
             model.status = read.status;
+            model.prefs = prefs;
             model.refreshError = null;
             model.updatedAt = this._deps.now();
         } else {
             model.loaded = true;
             model.state = STATES.unavailable;
             model.status = null;
+            model.prefs = null;
             model.refreshError = describeFailure(read.failure, this._deps.userName);
         }
         if (followUp)
             this._finishAction(read.ok);
+        // Listing the profiles again after a switch is the only thing besides the menu opening
+        // that does.
+        this._syncAccounts(switched);
         this._emit();
+    }
+
+    // Lists the profiles when the Account section appears in an open menu, and after a switch
+    // while the section is shown; never on another refresh, and never while the section is hidden.
+    _syncAccounts(reload) {
+        const visible = this._model.loaded && sectionsOf(this._model.state).account;
+        const active = this._menuOpen && visible;
+        const appeared = active && !this._accountsActive;
+        this._accountsActive = active;
+        if (visible && (appeared || reload))
+            this._requestAccounts();
+    }
+
+    _requestAccounts() {
+        const seq = ++this._accountsSeq;
+        const accounts = this._model.accounts;
+        accounts.loading = true;
+        accounts.failed = false;
+        this._emit();
+        this._deps.run(['switch', '--list', '--json'], COMMAND_TIMEOUT_SECONDS).then(result => {
+            // A newer request, or a disable, makes this reply stale.
+            if (this._destroyed || seq !== this._accountsSeq)
+                return;
+            const profiles = succeeded(result) ? parseProfiles(result.stdout) : null;
+            accounts.loading = false;
+            accounts.profiles = profiles;
+            accounts.failed = profiles === null;
+            this._emit();
+        });
     }
 
     // The error of a failed action is decided here, once its follow-up answered: the menu shows

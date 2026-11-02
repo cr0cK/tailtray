@@ -12,6 +12,11 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
   <img src="docs/screenshots/menu-login-required.png" alt="Tailtray menu when a login is required, with the command to copy" width="32%">
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/menu-account.png" alt="The Account submenu expanded, listing two accounts with a check mark on the one in use" width="32%">
+  <img src="docs/screenshots/menu-settings.png" alt="The Settings submenu expanded, with three switches" width="32%">
+</p>
+
 ## Features
 
 - A panel icon that shows the connection state: connected, connecting or disconnected, login or
@@ -21,10 +26,13 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
   device's MagicDNS name and Tailscale addresses, each one click away from your clipboard.
 - Clear explanations when Tailscale is not installed, not running, or you are not the operator,
   with the command to fix it ready to copy.
+- An **Account** submenu to switch between the accounts you are already logged in to.
+- A **Settings** submenu with three switches: use Tailscale subnets, use Tailscale DNS, and block
+  incoming connections.
 - A preferences window with the refresh interval.
 
-Accounts, exit nodes, settings, other devices, and notifications are coming in the next releases;
-see [`docs/specs/TRY.md`](docs/specs/TRY.md).
+Exit nodes, other devices, and notifications are coming in the next releases; see
+[`docs/specs/TRY.md`](docs/specs/TRY.md).
 
 ## Requirements
 
