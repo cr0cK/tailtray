@@ -1,0 +1,26 @@
+name: PR title lint
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional:
+    name: Conventional Commits title
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      # Squash merges use the PR title as the commit subject, which release-please reads.
+      - name: Check the PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! printf '%s' "$PR_TITLE" | grep -qE '^(feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert)(\([^)]+\))?!?: .+$'; then
+            echo "::error::PR title is not a valid Conventional Commits message."
+            echo "  got:      $PR_TITLE"
+            echo "  expected: <type>(<scope>)?: <description>"
+            exit 1
+          fi

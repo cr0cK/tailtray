@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.tailtray" path="/org/gnome/shell/extensions/tailtray/">
+    <key name="refresh-interval" type="u">
+      <default>10</default>
+      <summary>Refresh interval</summary>
+      <description>Time between two reads of the Tailscale state, in seconds, counted from the end of the previous read.</description>
+      <range min="5" max="60"/>
+    </key>
+  </schema>
+</schemalist>

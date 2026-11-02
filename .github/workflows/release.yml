@@ -1,0 +1,69 @@
+# On every push to main, release-please opens or updates a release PR that bumps
+# package.json, metadata.json version-name, and CHANGELOG.md from Conventional Commits.
+# Merging that PR tags vX.Y.Z and publishes a GitHub Release; the package job then
+# attaches the installable extension zip to it.
+#
+# release-please acts as the Tailtray release GitHub App, not GITHUB_TOKEN: GitHub holds
+# pull_request workflows on PRs opened by GITHUB_TOKEN for manual approval, while an App's PRs
+# run their checks like anyone else's. The App needs Contents and Pull requests write access;
+# its client ID is the RELEASE_APP_CLIENT_ID variable and its key the RELEASE_APP_PRIVATE_KEY
+# secret.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# GITHUB_TOKEN only uploads the zip to the release.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  package:
+    name: Attach extension zip
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    container: fedora:43
+    steps:
+      - name: Install build tools
+        run: dnf install -y --setopt=install_weak_deps=False gnome-shell glib2 make nodejs npm git gh
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Build the extension zip
+        run: |
+          npm ci
+          make check
+
+      - name: Upload the zip to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$TAG" dist/*.shell-extension.zip --clobber --repo "$GITHUB_REPOSITORY"

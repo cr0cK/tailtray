@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""A stand-in for the `tailscale` CLI, for tests and headless runs that must never touch the real
+tailnet. Put it on PATH under the name `tailscale` (scripts/sandbox.sh and scripts/screenshots.sh
+do), with TAILTRAY_FAKE_DIR pointing at a scratch directory.
+
+Replies come from files in that directory:
+  status.json, get.json, switch.json   what `status --json`, `get --json`, and
+                                       `switch --list --json` print, as the files were when
+                                       the command started
+  ping.out, ping.exit                  what `ping` prints and exits with (exit 0 by default)
+Every call is appended to calls.log as one JSON line {t, key, args}, before it sleeps.
+Per command, KEY being status, get, switch-list, up, down, set, switch, or ping:
+  KEY.sleep   seconds to sleep before answering (a killed command never takes effect)
+  KEY.fail    exit code to fail with after the sleep; KEY.stderr is what it prints (default
+              "fake failure")
+  KEY.stdout  printed instead of the usual reply, for garbage output
+  KEY.noeffect  succeed without changing the files below
+Effects: `up` sets BackendState to Running and `down` to Stopped in status.json, `set` updates
+get.json, and `switch <id>` moves `selected` in switch.json. `up` with any flag fails, as a reminder
+that Tailtray never passes one.
+"""
+import json
+import os
+import sys
+import time
+
+directory = os.environ.get('TAILTRAY_FAKE_DIR')
+if not directory:
+    print('fake-tailscale: TAILTRAY_FAKE_DIR is not set', file=sys.stderr)
+    sys.exit(2)
+args = sys.argv[1:]
+
+
+def path(name):
+    return os.path.join(directory, name)
+
+
+def read(name, default=None):
+    try:
+        with open(path(name), encoding='utf-8') as handle:
+            return handle.read()
+    except FileNotFoundError:
+        return default
+
+
+def write(name, text):
+    temporary = path(name + '.tmp')
+    with open(temporary, 'w', encoding='utf-8') as handle:
+        handle.write(text)
+    os.replace(temporary, path(name))
+
+
+def update_json(name, change):
+    data = json.loads(read(name))
+    change(data)
+    write(name, json.dumps(data, indent=2) + '\n')
+
+
+def command_key(arguments):
+    if arguments[:1] == ['status']:
+        return 'status'
+    if arguments[:1] == ['get']:
+        return 'get'
+    if arguments[:1] == ['switch']:
+        return 'switch-list' if '--list' in arguments else 'switch'
+    if arguments[:1] in (['up'], ['down'], ['set'], ['ping']):
+        return arguments[0]
+    return 'unknown'
+
+
+key = command_key(args)
+with open(path('calls.log'), 'a', encoding='utf-8') as log:
+    log.write(json.dumps({'t': time.time(), 'key': key, 'args': args}) + '\n')
+
+if key == 'unknown':
+    print('tailscale: unknown subcommand: %s' % ' '.join(args), file=sys.stderr)
+    sys.exit(2)
+
+# A read answers with the files as they were when it started, as a slow real command does.
+snapshot = {name: read(name) for name in ('status.json', 'get.json', 'switch.json')}
+sleep = read(key + '.sleep')
+if sleep:
+    time.sleep(float(sleep))
+
+code = read(key + '.fail')
+if code:
+    print((read(key + '.stderr') or 'fake failure').rstrip('\n'), file=sys.stderr)
+    sys.exit(int(code))
+
+override = read(key + '.stdout')
+if override is not None:
+    sys.stdout.write(override)
+elif key == 'status':
+    sys.stdout.write(snapshot['status.json'] or '{}')
+elif key == 'get':
+    sys.stdout.write(snapshot['get.json'] or '{}')
+elif key == 'switch-list':
+    sys.stdout.write(snapshot['switch.json'] or '[]')
+elif key == 'ping':
+    sys.stdout.write(read('ping.out', ''))
+    sys.exit(int(read('ping.exit', '0')))
+
+if read(key + '.noeffect') is not None:
+    sys.exit(0)
+
+if key == 'up':
+    if len(args) > 1:
+        print('fake-tailscale: up was called with flags: %s' % ' '.join(args[1:]), file=sys.stderr)
+        sys.exit(2)
+    update_json('status.json', lambda data: data.update(BackendState='Running'))
+elif key == 'down':
+    update_json('status.json', lambda data: data.update(BackendState='Stopped'))
+elif key == 'set':
+    def apply(data):
+        for flag in args[1:]:
+            name, _, value = flag.lstrip('-').partition('=')
+            data[name] = {'true': True, 'false': False}.get(value, value)
+    update_json('get.json', apply)
+elif key == 'switch':
+    def select(data):
+        for profile in data:
+            profile['selected'] = profile['id'] == args[1]
+    update_json('switch.json', select)

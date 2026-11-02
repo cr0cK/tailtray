@@ -1,0 +1,4 @@
+# release-please links each changelog entry to its short commit hash, and typos reads hex runs
+# such as the "baed" in 1baed4a as misspelled words.
+[default]
+extend-ignore-re = ["\\[[0-9a-f]{7}\\]\\(https://github\\.com/[^)]+/commit/[0-9a-f]{40}\\)"]
