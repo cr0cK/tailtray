@@ -3,12 +3,6 @@ code: TRY
 status: draft
 version: v0.1
 tracking: "#1"
-plans:
-  TRY-P1: todo
-  TRY-P2: todo
-  TRY-P3: todo
-  TRY-P4: todo
-  TRY-P5: todo
 ---
 
 # Tailtray — TRY specification
@@ -20,7 +14,9 @@ accounts that are already logged in, choosing an exit node, three Tailscale sett
 the other devices of the tailnet with copy and ping actions, desktop notifications, and the
 preferences window.
 
-![Menu mockups](images/TRY-menu.png)
+The mockup, [`mockups/TRY.html`](mockups/TRY.html), shows every state of the menu, the
+notifications, and the preferences window; open it in a browser. Where it and the rules disagree,
+the rules win.
 
 ## Audience and environment
 
@@ -366,3 +362,111 @@ The error text depends on the failure, checked in this order:
 - A GNOME Quick Settings toggle.
 - A `tailscaled` socket other than the default one, and talking to the LocalAPI directly.
 - GNOME Shell versions other than 49, and translations.
+
+## Plans
+
+Each plan is one PR, delivered in order. Its delivery is stamped on the tracking issue, #1.
+
+### TRY-P1: repository, state, header, this device
+
+**Scope**
+- The repository, modeled on cr0cK/greenlight: `src/` (extension, prefs, `metadata.json`, GSettings schema, icons), `tests/`, `package.json` with ESLint, `Makefile` with `make check` (schema, `node --check`, `node --test`, `gnome-extensions pack`), `.github/workflows` (PR checks on Fedora 43, PR title lint, release-please as a GitHub App), pre-commit (ESLint, tests, schema, gitleaks, typos), `release-please-config.json` with `src/metadata.json` `version-name`, README, CONTRIBUTING, AGENTS.md, `CLAUDE.md` (`@AGENTS.md`), LICENSE (MIT), PR template.
+- `scripts/fake-tailscale`: a stand-in CLI that answers `status --json`, `get --json`, `switch --list --json`, `up`, `down`, `set`, `switch`, and `ping` from fixture files in a scratch directory, records the arguments it was called with, and can be told to sleep or fail per command. `scripts/sandbox.sh` and `scripts/screenshots.sh` put it first on `PATH` when asked to.
+- Spec sections: Audience and environment, Reading the state, Connection states, Panel icon, Menu layout, Header, Identity line, Login required and Approval required, Error block, Warnings, This device, Footer, Copying, Actions, Commands and time limits, Errors, Preferences (refresh interval and version), Lifecycle, Security and privacy.
+
+**Temporary restrictions**
+- No Account, Exit node, Settings, or Other devices section: TRY-P2, P3, P4.
+- No exit node arrow badge on the panel icon: TRY-P3.
+- `tailscale get --json` is not called yet: TRY-P2 adds it with the Settings switches.
+- No notifications, no **Notifications** preference, no `notifications` and `notified-key-expiries` keys: TRY-P5.
+
+**Prototype** (first, on a real `tailscaled` with the user as operator, then throwaway)
+1. From `Stopped`, `tailscale up` with no argument exits 0 and leaves `tailscale get --json` unchanged. Pass: exit 0 and the JSON before and after is equal; the time to `Running` is reported, not judged. Fail: a `blocked` stamp on the tracking issue, since the header switch has no other safe command.
+2. `tailscale down` exits 0, reaches `Stopped`, with the same preference check.
+3. On GNOME Shell 49, `Main.osdWindowManager.showOne(monitor, icon, label)` with `edit-copy-symbolic` shows on the current monitor (it shows nothing without an icon). Fail: outbox entry with the replacement.
+
+**Acceptance**
+- `node --test` covers the pure modules: state derivation from every `BackendState` and from each failure, the error text table in order, warnings (filtering `Tailscale is stopped.`, key expiry at 8 days, 7 days, 23 h, past, missing, zero time), identity line with missing parts, relative times at every boundary, and This device rows with missing addresses.
+- `make check` and `npm run lint` pass; CI is green.
+- In a headless GNOME Shell 49 with `scripts/fake-tailscale`, screenshots of the menu in Connected, Disconnected, Connecting, Login required, Approval required, and Unavailable (CLI missing, service down, access denied), and of the panel icon in each; no `JS ERROR` or `JS WARNING` in the shell log.
+- Driving the switch calls the fake with exactly `up` then `down`; activating an address copies it (read back from `St.Clipboard`) and closes the menu.
+- Disabling the extension while a fake command sleeps kills it (no `tailscale` child left), and leaves no timer (checked by re-enabling and counting refreshes); a fake reply delayed past a disable and re-enable changes nothing in the new instance.
+- With the fake: three refresh requests during a slow refresh run exactly one more refresh; a new refresh interval applies from the next scheduled refresh; a refresh started before an action ended is discarded (slow status, fast `down`); a refresh that flips the switch calls no command; a failing `status` shows Unavailable while a failing `get` does not; a sleeping read is killed at 30 s (time limit lowered by an environment variable for the test).
+- Login required with and without `AuthURL`: the **Log in…** row or the copyable `tailscale up` command; `tailscale login` is never called.
+
+**Technical notes**
+- The repository, the toolchain, and CI are new in this plan: the checks of the project settings (`npm run lint`, `make check`, headless GNOME Shell) apply from its own PR on, and the plan keeps `docs/specs/README.md` in step if a command changes.
+- **GJS subprocess**: `Gio.Subprocess` with `STDOUT_PIPE | STDERR_PIPE`, `communicate_utf8_async`, and a `Gio.Cancellable` per call; on timeout or disable, `force_exit()`. Greenlight's `_runGh` is the pattern to copy (`src/extension.js` there), with a per-call timeout argument. No command needs streamed output: Tailtray never runs `tailscale login`, which would switch to a new empty profile (`cmd/tailscale/cli/login.go`).
+- **Stale callbacks**: give each enable an instance generation and each refresh a sequence number bumped by every action; a completion whose generation or sequence is stale returns without touching anything.
+- **`tailscale` exit codes**: `status --json` exits 0 in `Stopped` and `NeedsLogin`; parse stdout first, then the exit code. When `tailscaled` is down it exits 1 with `failed to connect to local tailscaled` on stderr.
+- **`tailscale up` with any flag is dangerous**: the CLI refuses or rewrites preferences unless every non-default flag is repeated. Only the bare `tailscale up` takes the simple path that sets `WantRunning`. The prototype checks this.
+- **JSON fields used** (tailscale 1.104): `BackendState`, `AuthURL`, `Health`, `CurrentTailnet.Name`, `Self` (`DNSName`, `TailscaleIPs`, `UserID`, `KeyExpiry`), `User[<id>].LoginName`, `Peer[*]` (`DNSName`, `HostName`, `OS`, `Online`, `LastSeen`, `TailscaleIPs`, `ExitNode`, `ExitNodeOption`, `Location`). `get --json` keys: `accept-routes`, `accept-dns`, `shields-up`, `exit-node-allow-lan-access`. `switch --list --json`: `[{id, nickname, tailnet, account, selected}]`. Missing fields are normal; treat every one as optional.
+- **Zero times**: Go's zero time prints as `0001-01-01T00:00:00Z`; treat it as missing.
+- **Menu**: keep persistent sections and update rows in place, as greenlight does (`_buildMenu()` once, sections rebuilt), so open submenus and ping results survive refreshes. GNOME Shell cannot nest a `PopupSubMenuMenuItem` inside another submenu, which is why devices expand inside a scroll view in the main menu, not inside a submenu.
+- **Clipboard**: `St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, value)`.
+- **OSD**: `Main.osdWindowManager.showOne(global.display.get_current_monitor(), Gio.ThemedIcon.new('edit-copy-symbolic'), label)` on 49; `OsdWindow.show()` returns early without an icon (`js/ui/osdWindow.js`).
+- **Headless verification**: reuse greenlight's AGENTS.md recipe (headless Wayland shell in `dbus-run-session`, keyfile GSettings, unsafe-mode helper for Eval and Screenshot) with `scripts/fake-tailscale` first on `PATH`, so tests never touch the real tailnet.
+- **Public repository hygiene**: fixtures and screenshots use fictional names (`example.org`, `tail1234.ts.net`, `100.64.x.y`), never a real tailnet.
+
+### TRY-P2: Account and Settings
+
+**Scope**: spec sections Account and Settings, and the `tailscale get --json` call of Reading the state.
+
+**Temporary restrictions**
+- No Exit node or Other devices section: TRY-P3, P4.
+- No notifications: TRY-P5.
+
+**Acceptance**
+- Unit tests: profile rows from `switch --list --json` (selected, missing account), switch values from `get --json` (missing key makes the switch insensitive).
+- Headless GNOME Shell with the fake: activating another profile calls `switch <id>`; activating the selected one calls nothing; each switch calls `set --<flag>=<true|false>`; the menu stays open; the profile list is requested once per menu opening and once after each switch, not per refresh (call count in the fake's log); after a switch with the menu open, the new profile is checked.
+- Profile list states: `Loading…` while the first answer sleeps, the previous profiles insensitive while a later one sleeps, `Could not list accounts` when it fails.
+- While a slow `switch` runs, every action row is insensitive; no second action command reaches the fake.
+- Screenshots of both submenus expanded.
+
+**Technical notes**
+- See TRY-P1 for the subprocess, menu, and headless notes.
+- **Switch rows that stay open**: `PopupSwitchMenuItem.activate()` toggles, then calls `PopupBaseMenuItem.activate()`, which closes the menu (`js/ui/popupMenu.js`). Override `activate` so it toggles without calling the parent, and set rendered state with `setToggleState`, which does not emit `toggled`, so a refresh never runs a command.
+
+### TRY-P3: Exit node
+
+**Scope**: spec section Exit node, and the exit node badge of Panel icon.
+
+**Temporary restrictions**
+- No Other devices section: TRY-P4. Peers with `Location` are still listed under Exit node.
+- No notifications: TRY-P5.
+
+**Acceptance**
+- Unit tests: exit node list (sorting, offline insensitive except the one in use, the node in use listed and checked even without `ExitNodeOption`, IPv6 fallback, no address insensitive, `None` checked with no exit node, `None available` only with no option and none in use).
+- Headless with the fake: choosing a node calls `set --exit-node=<IPv4>`, **None** calls `set --exit-node=`, the checked row calls nothing, **Allow LAN access** calls `set --exit-node-allow-lan-access=<bool>`; the icon shows the badge while an exit node is in use, offline or not.
+- Screenshots: submenu expanded with an online, an offline, and a checked offline node; the panel icon with the badge.
+
+**Technical notes**
+- See TRY-P1 for the subprocess, menu, and headless notes. The exit node badge is a second symbolic icon next to the glyph's, swapped on refresh.
+
+### TRY-P4: Other devices
+
+**Scope**: spec sections Other devices, Device names, and Relative times as applied to offline devices.
+
+**Temporary restrictions**
+- No notifications: TRY-P5.
+
+**Acceptance**
+- Unit tests: device list (excludes `Location` peers, online first, case-insensitive names, `HostName` fallback, counts), ping parsing of (stdout, stderr, exit code) for a direct pong, a DERP pong, a peer relay pong, a pong with a non-zero exit code, a timeout, and garbage. Fixtures come from real `tailscale ping -c 1 --until-direct=false` output captured on a live tailnet when that path is available, otherwise built from the format strings of `cmd/tailscale/cli/ping.go` at v1.104.2; either way without real names or addresses.
+- Headless with the fake: expanding a device collapses the previous one; **Ping** calls `ping -c 1 --until-direct=false --timeout 5s <IPv4>` and shows each result; **Ping** is insensitive for an offline device; a refresh while a device is expanded keeps it expanded and keeps its ping result; 60 fake devices scroll within 280 px; closing the menu during a slow ping kills it, and reopening shows no result; two devices ping at once.
+- Screenshots: one device expanded with a ping result.
+
+**Technical notes**
+- See TRY-P1 for the subprocess, menu, and headless notes.
+- **Ping**: `--until-direct` defaults to true, so `-c 1` can exit 1 with `direct connection not established` after a DERP pong; Tailtray passes `--until-direct=false` and still parses the pong before the exit code.
+
+### TRY-P5: Notifications
+
+**Scope**: spec section Notifications, and the **Notifications** preference and the `notifications` and `notified-key-expiries` settings keys of Preferences.
+
+**Acceptance**
+- Unit tests: a pure transition function over (previous good state, current state, last Tailtray action time, notified expiry pairs) for each notification, the baseline on the first successful refresh after failed ones, a failed refresh between two good ones, the 30-second action window, exit node A online to exit node B offline (no notification), and the pair list capped at 10.
+- Headless with the fake: each notification appears once in the message tray for its transition; none with the preference off; a key expiry notification is not repeated after restarting the shell, nor after switching accounts back and forth; the Login required notification is withdrawn once the state leaves it.
+
+**Technical notes**
+- See TRY-P1 for the subprocess, menu, and headless notes.
+- **Notifications**: GNOME 49 `MessageTray.Source` and `MessageTray.Notification` with `Main.messageTray.add(source)`; check the 49 constructor signatures (they take an object of properties since 46).
