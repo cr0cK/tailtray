@@ -163,8 +163,9 @@ Settings, and before the footer. Two separators never touch.
 
 - A submenu row **Account** with the current tailnet on its right, followed by one row per
   profile of `tailscale switch --list --json`.
-- `tailscale switch --list --json` runs when the menu opens and after every account switch, not
-  on every refresh, and only while the Account section is shown.
+- `tailscale switch --list --json` runs whenever the Account section appears in an open menu (when
+  the menu opens, or when a refresh shows the section while the menu is open) and after every
+  account switch; never on other refreshes, and never while the section is hidden.
 - Until it answers, the submenu shows the profiles of the last answer, insensitive, or a single
   insensitive `Loading…` row when there was none. When it fails, the submenu shows a single
   insensitive `Could not list accounts` row.
@@ -274,18 +275,24 @@ Settings, and before the footer. Two separators never touch.
 - An action is a command that changes Tailscale: the header switch, an account switch, an exit
   node, **Allow LAN access**, and the Settings switches.
 - Every action runs one `tailscale` command, with an argument array and no shell.
-- One action runs at a time. While it runs, the row that started it is insensitive and shows its
-  progress, and every other action row is insensitive too.
+- One action runs at a time. An action is pending from its start until the refresh after it
+  answers or fails. While it is pending, the row that started it is insensitive and shows its
+  progress, and every other action row is insensitive too. Refreshes that start while it is
+  pending are discarded (see Reading the state), so nothing overwrites that progress.
 - The progress shown: the header label reads `Connecting…` or `Disconnecting…`; the account row
   chosen shows `Switching…` on its right; the exit node row chosen, or **None**, shows `Setting…`
   on its right; a switch row (Settings, **Allow LAN access**) shows the requested value at once.
-- The refresh after the action shows the real state, so a switch whose action failed goes back
-  to its previous value.
+- The refresh after the action shows the state it reads: a switch shows the value
+  `tailscale get --json` returns, which may be the requested one even when the command failed,
+  since a killed `tailscale set` is not rolled back. When that read fails, the switch is
+  insensitive, as Settings says.
 - A failed action's error is decided once the refresh after it answers, never before: when that
   refresh shows Login required or Approval required, the action sets no error block, since the
   menu shows that state; when that refresh fails, the Unavailable error applies; otherwise the
   action's error fills the error block. This holds for every action, such as `tailscale up` or a
   `tailscale switch` to a logged-out profile.
+- Closing the menu drops the error of a pending action as well as the error shown: an error never
+  appears in a later opening.
 - After the action ends, Tailtray refreshes, whether the action succeeded or failed.
 - Actions keep the menu open.
 
@@ -393,7 +400,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - No notifications, no **Notifications** preference, no `notifications` and `notified-key-expiries` keys: TRY-P5.
 
 **Prototype** (first, on a real `tailscaled` with the user as operator, then throwaway)
-1. Precondition: set non-default preferences first, then record them (`tailscale set --accept-routes=true --shields-up=true --exit-node-allow-lan-access=true`, and an exit node when the tailnet has one). From `Stopped`, `tailscale up` with no argument exits 0 and leaves `tailscale get --json` unchanged. Pass: exit 0 and the JSON before and after is equal; the time to `Running` is reported, not judged. Fail: a `blocked` stamp on the tracking issue, since the header switch has no other safe command. Restore the user's preferences afterwards.
+1. Precondition: record the user's preferences (`tailscale get --json`), set non-default ones, then record those (`tailscale set --accept-routes=true --shields-up=true --exit-node-allow-lan-access=true`, and an exit node when the tailnet has one). From `Stopped`, `tailscale up` with no argument exits 0 and leaves `tailscale get --json` unchanged. Pass: exit 0 and the JSON before and after is equal; the time to `Running` is reported, not judged. Fail: a `blocked` stamp on the tracking issue, since the header switch has no other safe command. Restore the preferences recorded first, afterwards.
 2. `tailscale down` exits 0, reaches `Stopped`, with the same preference check.
 3. On GNOME Shell 49, `Main.osdWindowManager.showOne(monitor, icon, label)` with `edit-copy-symbolic` shows on the current monitor (it shows nothing without an icon). Fail: outbox entry with the replacement.
 
@@ -437,8 +444,10 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Headless GNOME Shell with the fake: activating another profile calls `switch <id>`; activating the selected one calls nothing; each switch calls `set --<flag>=<true|false>`; the menu stays open; the profile list is requested once per menu opening and once after each switch, not per refresh (call count in the fake's log); after a switch with the menu open, the new profile is checked.
 - Profile list states: `Loading…` while the first answer sleeps, the previous profiles insensitive while a later one sleeps, `Could not list accounts` when it fails.
 - While a slow `switch` runs, every action row is insensitive and the chosen profile shows `Switching…`; no second action command reaches the fake.
-- A switch row shows the requested value while its `set` runs, and its previous value after a failing `set`.
-- A failing `switch` whose next refresh answers `NeedsLogin` shows Login required and no error block; in Login required, opening the menu does not call `switch --list --json`.
+- A switch row shows the requested value while its `set` runs, and after it the value the next `get` returns: the old one when the fake `set` fails without changing it; insensitive when that `get` fails.
+- A periodic refresh that completes while a slow `switch` is pending leaves `Switching…` and the locks in place.
+- Closing the menu while the refresh after a failing `set` sleeps, then reopening once it answered, shows no error block.
+- A failing `switch` whose next refresh answers `NeedsLogin` shows Login required; a later refresh to `Running`, with the menu still open and no new action, shows no error block and then calls `switch --list --json` once. In Login required, opening the menu does not call `switch --list --json`. The same holds with `NeedsMachineAuth`.
 - A failing `get` keeps the state Connected, makes the three switches insensitive, and shows no error block.
 - Screenshots of both submenus expanded.
 
