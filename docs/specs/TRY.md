@@ -88,7 +88,7 @@ The menu shows these sections, top to bottom. A section that a state does not li
 |---|---|---|---|---|---|
 | Header | yes | yes | yes | yes | yes |
 | Identity line | yes | yes | yes | no | no |
-| Error block | when set | when set | when set | when set | yes |
+| Error block | when set | when set | when set | no | yes |
 | Warnings | when any | when any | when any | when any | no |
 | This device | yes | no | no | no | no |
 | Account | yes | yes | yes | no | no |
@@ -112,8 +112,7 @@ Settings, and before the footer. Two separators never touch.
   `Disconnecting…`. The next refresh sets the real state.
 - `tailscale up` is never run with flags: with any flag, it would rewrite preferences.
 - `tailscale up` waits for authentication when the node needs a login or an approval, so it can
-  end by its time limit. When the refresh after it shows Login required or Approval required,
-  the action sets no error block, whatever its outcome: the menu shows that state instead.
+  end by its time limit. Actions handle that case as Actions says.
 
 ### Identity line
 
@@ -165,7 +164,7 @@ Settings, and before the footer. Two separators never touch.
 - A submenu row **Account** with the current tailnet on its right, followed by one row per
   profile of `tailscale switch --list --json`.
 - `tailscale switch --list --json` runs when the menu opens and after every account switch, not
-  on every refresh.
+  on every refresh, and only while the Account section is shown.
 - Until it answers, the submenu shows the profiles of the last answer, insensitive, or a single
   insensitive `Loading…` row when there was none. When it fails, the submenu shows a single
   insensitive `Could not list accounts` row.
@@ -282,6 +281,11 @@ Settings, and before the footer. Two separators never touch.
   on its right; a switch row (Settings, **Allow LAN access**) shows the requested value at once.
 - The refresh after the action shows the real state, so a switch whose action failed goes back
   to its previous value.
+- A failed action's error is decided once the refresh after it answers, never before: when that
+  refresh shows Login required or Approval required, the action sets no error block, since the
+  menu shows that state; when that refresh fails, the Unavailable error applies; otherwise the
+  action's error fills the error block. This holds for every action, such as `tailscale up` or a
+  `tailscale switch` to a logged-out profile.
 - After the action ends, Tailtray refreshes, whether the action succeeded or failed.
 - Actions keep the menu open.
 
@@ -401,7 +405,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Disabling the extension while a fake command sleeps kills it (no `tailscale` child left), and leaves no timer (checked by re-enabling and counting refreshes); a fake reply delayed past a disable and re-enable changes nothing in the new instance.
 - With the fake: three refresh requests during a slow refresh run exactly one more refresh; a new refresh interval applies from the next scheduled refresh; a refresh started before an action ended is discarded (slow status, fast `down`); a refresh that flips the switch calls no command; a failing `status` shows Unavailable; a sleeping read is killed at 30 s (time limit lowered by an environment variable for the test).
 - Login required shows only the copyable `tailscale up` command, the warnings, and the footer, with or without `AuthURL`; Approval required shows its line and **Open admin console**; `tailscale login` is never called.
-- A fake `up` that sleeps past its time limit while `status` answers `NeedsLogin` leaves no error block, and the menu shows Login required.
+- A fake `up` that sleeps past its time limit while `status` answers `NeedsLogin` leaves no error block, and the menu shows Login required; a failing `down` shows its error only once the refresh after it answered.
 - A refresh interval chosen in the preferences window is still set after restarting the headless shell, and the refresh timer follows it.
 
 **Technical notes**
@@ -434,6 +438,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Profile list states: `Loading…` while the first answer sleeps, the previous profiles insensitive while a later one sleeps, `Could not list accounts` when it fails.
 - While a slow `switch` runs, every action row is insensitive and the chosen profile shows `Switching…`; no second action command reaches the fake.
 - A switch row shows the requested value while its `set` runs, and its previous value after a failing `set`.
+- A failing `switch` whose next refresh answers `NeedsLogin` shows Login required and no error block; in Login required, opening the menu does not call `switch --list --json`.
 - A failing `get` keeps the state Connected, makes the three switches insensitive, and shows no error block.
 - Screenshots of both submenus expanded.
 
