@@ -1,6 +1,6 @@
 ---
 code: TRY
-status: draft
+status: active
 version: v0.1
 tracking: "#1"
 ---
