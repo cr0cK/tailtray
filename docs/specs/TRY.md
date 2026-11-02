@@ -49,8 +49,10 @@ the rules win.
   Settings and Exit node), and nothing else changes.
 - A failed refresh keeps the last good state in memory for notifications, but the menu and the
   icon show the failure (see Unavailable).
-- The result of a refresh that started before the last action ended is discarded, so a refresh
-  never shows the state from before an action, and never mixes two accounts.
+- While an action is pending (see Actions), only its follow-up refresh counts: the result of any
+  other refresh, already running or started meanwhile, is discarded. A refresh that started
+  before the last action ended is discarded too. So a refresh never shows the state from before
+  an action, and never mixes two accounts.
 - A refresh while the menu is open updates the menu in place: the expanded submenu, the expanded
   device, and each device's last ping result stay as they are, as long as that submenu or device
   still exists.
@@ -275,25 +277,27 @@ Settings, and before the footer. Two separators never touch.
 - An action is a command that changes Tailscale: the header switch, an account switch, an exit
   node, **Allow LAN access**, and the Settings switches.
 - Every action runs one `tailscale` command, with an argument array and no shell.
-- One action runs at a time. An action is pending from its start until the refresh after it
-  answers or fails. While it is pending, the row that started it is insensitive and shows its
-  progress, and every other action row is insensitive too. Refreshes that start while it is
-  pending are discarded (see Reading the state), so nothing overwrites that progress.
+- One action runs at a time. Its **follow-up** is the refresh Tailtray requests as soon as the
+  command ends, whether it succeeded or failed. It takes the place of any refresh already queued,
+  and starts as soon as no refresh runs. The action is pending from its start until its
+  follow-up answers or fails.
+- While it is pending, the row that started it is insensitive and shows its progress, and every
+  other action row is insensitive too. Only the follow-up's result is shown (see Reading the
+  state), so nothing overwrites that progress.
 - The progress shown: the header label reads `Connecting…` or `Disconnecting…`; the account row
   chosen shows `Switching…` on its right; the exit node row chosen, or **None**, shows `Setting…`
   on its right; a switch row (Settings, **Allow LAN access**) shows the requested value at once.
-- The refresh after the action shows the state it reads: a switch shows the value
+- The follow-up shows the state it reads: a switch shows the value
   `tailscale get --json` returns, which may be the requested one even when the command failed,
   since a killed `tailscale set` is not rolled back. When that read fails, the switch is
   insensitive, as Settings says.
-- A failed action's error is decided once the refresh after it answers, never before: when that
-  refresh shows Login required or Approval required, the action sets no error block, since the
-  menu shows that state; when that refresh fails, the Unavailable error applies; otherwise the
+- A failed action's error is decided once its follow-up answers, never before: when the
+  follow-up shows Login required or Approval required, the action sets no error block, since the
+  menu shows that state; when the follow-up fails, the Unavailable error applies; otherwise the
   action's error fills the error block. This holds for every action, such as `tailscale up` or a
   `tailscale switch` to a logged-out profile.
 - Closing the menu drops the error of a pending action as well as the error shown: an error never
   appears in a later opening.
-- After the action ends, Tailtray refreshes, whether the action succeeded or failed.
 - Actions keep the menu open.
 
 ## Commands and time limits
@@ -412,7 +416,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Disabling the extension while a fake command sleeps kills it (no `tailscale` child left), and leaves no timer (checked by re-enabling and counting refreshes); a fake reply delayed past a disable and re-enable changes nothing in the new instance.
 - With the fake: three refresh requests during a slow refresh run exactly one more refresh; a new refresh interval applies from the next scheduled refresh; a refresh started before an action ended is discarded (slow status, fast `down`); a refresh that flips the switch calls no command; a failing `status` shows Unavailable; a sleeping read is killed at 30 s (time limit lowered by an environment variable for the test).
 - Login required shows only the copyable `tailscale up` command, the warnings, and the footer, with or without `AuthURL`; Approval required shows its line and **Open admin console**; `tailscale login` is never called.
-- A fake `up` that sleeps past its time limit while `status` answers `NeedsLogin` leaves no error block, and the menu shows Login required; a failing `down` shows its error only once the refresh after it answered.
+- A fake `up` that sleeps past its time limit while `status` answers `NeedsLogin` leaves no error block, and the menu shows Login required; a failing `down` shows its error only once its follow-up answered.
 - A refresh interval chosen in the preferences window is still set after restarting the headless shell, and the refresh timer follows it.
 
 **Technical notes**
@@ -445,7 +449,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Profile list states: `Loading…` while the first answer sleeps, the previous profiles insensitive while a later one sleeps, `Could not list accounts` when it fails.
 - While a slow `switch` runs, every action row is insensitive and the chosen profile shows `Switching…`; no second action command reaches the fake.
 - A switch row shows the requested value while its `set` runs, and after it the value the next `get` returns: the old one when the fake `set` fails without changing it; insensitive when that `get` fails.
-- A periodic refresh that completes while a slow `switch` is pending leaves `Switching…` and the locks in place.
+- A periodic refresh that completes while a slow `switch` is pending, or just after the command ended and before the follow-up answered, leaves `Switching…` and the locks in place; the follow-up's answer then ends them.
 - Closing the menu while the refresh after a failing `set` sleeps, then reopening once it answered, shows no error block.
 - A failing `switch` whose next refresh answers `NeedsLogin` shows Login required; a later refresh to `Running`, with the menu still open and no new action, shows no error block and then calls `switch --list --json` once. In Login required, opening the menu does not call `switch --list --json`. The same holds with `NeedsMachineAuth`.
 - A failing `get` keeps the state Connected, makes the three switches insensitive, and shows no error block.
