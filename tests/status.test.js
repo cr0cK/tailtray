@@ -171,9 +171,9 @@ test('the accessible name of the icon follows the label of a pending action', ()
     assert.equal(panelIconModel(STATES.disconnected, 'Connecting…').name, 'Tailscale: Connecting…');
 });
 
-test('the menu layout matches the spec table through P2', () => {
+test('the menu layout matches the spec table through P3', () => {
     const shown = id => Object.entries(sectionsOf(STATES[id])).filter(([, on]) => on).map(([name]) => name);
-    assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice', 'account', 'settings']);
+    assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice', 'account', 'exitNode', 'settings']);
     assert.deepEqual(shown('connecting'), ['identity', 'errorBlock', 'warnings', 'account']);
     assert.deepEqual(shown('disconnected'), ['identity', 'errorBlock', 'warnings', 'account', 'settings']);
     assert.deepEqual(shown('login'), ['warnings', 'loginHelp']);
@@ -187,4 +187,13 @@ test('separators sit between groups and never touch', () => {
     assert.deepEqual(seps(false, true), {top: true, device: false, footer: true});
     assert.deepEqual(seps(true, false), {top: true, device: false, footer: true});
     assert.deepEqual(seps(false, false), {top: false, device: false, footer: true});
+});
+
+test('connected through an exit node has the arrow glyph, whatever the exit node does', () => {
+    assert.deepEqual(panelIconModel(STATES.connected, 'Connected', true), {
+        glyph: 'exit', dimmed: false, badge: null, name: 'Tailscale: Connected',
+    });
+    // The other states keep their own look: the exit node only matters while connected.
+    for (const id of ['connecting', 'disconnected', 'login', 'approval', 'unavailable'])
+        assert.equal(panelIconModel(STATES[id], undefined, false).glyph, 'outline');
 });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
 
-import {parsePrefs, setArguments, settingRows} from '../src/settings.js';
+import {LAN_ACCESS, parsePrefs, setArguments, settingRows, switchRow} from '../src/settings.js';
 
 const GET = readFileSync(new URL('fixtures/get.json', import.meta.url), 'utf8');
 const ok = stdout => ({exitCode: 0, stdout, stderr: ''});
@@ -59,4 +59,19 @@ test('a pending action locks every switch, and a set shows the requested value',
     const other = settingRows(prefs, {kind: 'switch', id: '1a2b'});
     assert.deepEqual(other.map(row => row.value), [false, true, false]);
     assert.deepEqual(other.map(row => row.sensitive), [false, false, false]);
+});
+
+test('Allow LAN access is a switch row like the others', () => {
+    const prefs = {'exit-node-allow-lan-access': true};
+    assert.deepEqual(switchRow(prefs, null, LAN_ACCESS), {
+        id: 'exit-node-allow-lan-access', label: 'Allow LAN access', value: true, sensitive: true,
+    });
+    assert.equal(switchRow({}, null, LAN_ACCESS).sensitive, false);
+    assert.equal(switchRow(null, null, LAN_ACCESS).sensitive, false);
+    const pending = {kind: 'set', flag: 'exit-node-allow-lan-access', value: false};
+    assert.deepEqual(switchRow(prefs, pending, LAN_ACCESS).value, false);
+    assert.equal(switchRow(prefs, pending, LAN_ACCESS).sensitive, false);
+    // An exit node action locks it without touching its value.
+    const locked = switchRow(prefs, {kind: 'exit', target: 'n1'}, LAN_ACCESS);
+    assert.deepEqual([locked.value, locked.sensitive], [true, false]);
 });

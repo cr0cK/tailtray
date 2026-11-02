@@ -65,8 +65,13 @@ capture_menu menu-login-required.png
 show running connected
 capture_menu menu-account.png _accountMenu
 capture_menu menu-settings.png _settingsMenu
+# An exit node in use that is offline, next to an online and an offline one.
+fake_state exit-node
+shell_eval "$HL_EXT._engine.requestRefresh()" >/dev/null
+wait_model "m.status.Peer['nodekey:eeee'] !== undefined"
+capture_menu menu-exit-node.png _exitMenu
 crop_menus menu-connected.png menu-disconnected.png menu-login-required.png menu-account.png \
-    menu-settings.png
+    menu-settings.png menu-exit-node.png
 
 # Drop metadata such as creation time so unchanged screenshots stay byte-identical.
 for image in "$OUT"/*.png; do

@@ -5,6 +5,9 @@ export const SETTINGS = [
     {id: 'shields-up', label: 'Block incoming connections'},
 ];
 
+/** The Allow LAN access switch of the Exit node submenu; it is a preference like the others. */
+export const LAN_ACCESS = {id: 'exit-node-allow-lan-access', label: 'Allow LAN access'};
+
 /**
  * Reads the result of `tailscale get --json`, {missing, timedOut, exitCode, stdout, stderr}.
  * Returns the boolean preferences it printed as an object, or null when the read failed or printed
@@ -30,20 +33,23 @@ export function setArguments(flag, value) {
 }
 
 /**
- * The switch rows of the Settings submenu, `{id, label, value, sensitive}`. `prefs` comes from
- * parsePrefs (null when the read failed) and `pending` is the action in progress, if any.
- * A switch whose value is unknown is insensitive; so is every switch while an action is pending,
- * and the one being set shows the value that was requested.
+ * A switch row, `{id, label, value, sensitive}`. `prefs` comes from parsePrefs (null when the read
+ * failed) and `pending` is the action in progress, if any. A switch whose value is unknown is
+ * insensitive; so is every switch while an action is pending, and the one being set shows the
+ * value that was requested.
  */
+export function switchRow(prefs, pending, {id, label}) {
+    const known = typeof prefs?.[id] === 'boolean';
+    const requested = pending?.kind === 'set' && pending.flag === id;
+    return {
+        id,
+        label,
+        value: requested ? pending.value : known && prefs[id],
+        sensitive: known && !pending,
+    };
+}
+
+/** The switch rows of the Settings submenu. */
 export function settingRows(prefs, pending) {
-    return SETTINGS.map(({id, label}) => {
-        const known = typeof prefs?.[id] === 'boolean';
-        const requested = pending?.kind === 'set' && pending.flag === id;
-        return {
-            id,
-            label,
-            value: requested ? pending.value : known && prefs[id],
-            sensitive: known && !pending,
-        };
-    });
+    return SETTINGS.map(setting => switchRow(prefs, pending, setting));
 }

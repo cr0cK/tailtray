@@ -20,6 +20,7 @@ new `src/*.js` and `src/*.svg` files on its own.
 | `src/errors.js` | The error text table (pure) |
 | `src/accounts.js` | Profile rows of `switch --list --json` and the current tailnet (pure) |
 | `src/settings.js` | Switch values of `get --json` and the `set` arguments (pure) |
+| `src/exitnodes.js` | Exit node rows, the node in use, and the `set --exit-node` arguments (pure) |
 | `src/warnings.js` | Health and key expiry warnings (pure) |
 | `src/devices.js` | Device names, sorting, copyable rows (pure) |
 | `src/time.js` | Relative times (pure) |
