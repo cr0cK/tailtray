@@ -447,6 +447,9 @@ export default class TailtrayExtension extends Extension {
 
     _renderAccount(model, shown) {
         this._accountMenu.visible = shown;
+        // The expanded rows are not part of the heading: they go away with the section.
+        if (!shown)
+            this._accountMenu.menu.close(false);
         this._accountTailnet.text = currentTailnet(model.status, model.accounts.profiles);
         const menu = this._accountMenu.menu;
         const rows = accountRows(model.accounts, model.pending);
@@ -464,21 +467,21 @@ export default class TailtrayExtension extends Extension {
                 item.setSensitive(false);
                 menu.addMenuItem(item);
             } else {
-                for (const row of rows.profiles) {
+                rows.profiles.forEach((row, index) => {
                     const item = this._profileItem(row);
-                    this._accountItems.set(row.id, item);
+                    this._accountItems.set(index, item);
                     menu.addMenuItem(item);
-                }
+                });
             }
         }
-        for (const row of rows.profiles ?? []) {
-            const item = this._accountItems.get(row.id);
+        (rows.profiles ?? []).forEach((row, index) => {
+            const item = this._accountItems.get(index);
             item.profileSelected = row.selected;
             item.setOrnament(row.selected ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
             item.setSensitive(row.sensitive);
             item.progressLabel.text = row.progress;
             item.progressLabel.visible = row.progress !== '';
-        }
+        });
     }
 
     /** A profile row: the tailnet, the account under it, and the progress on its right. */
@@ -506,6 +509,8 @@ export default class TailtrayExtension extends Extension {
 
     _renderSettings(model, shown) {
         this._settingsMenu.visible = shown;
+        if (!shown)
+            this._settingsMenu.menu.close(false);
         // Updating a switch from a refresh must not look like the user's toggle.
         this._rendering = true;
         for (const row of settingRows(model.prefs, model.pending)) {

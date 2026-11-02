@@ -313,7 +313,13 @@ action_calls() {
 }
 
 # The sensitivity (reactive) and the check mark of a profile row, and the value of a switch row.
-profile_item() { echo "$HL_EXT._accountItems.get('$1')"; }
+# Profile rows are keyed by their position in the answer: 1a2b is the first, 3c4d the second.
+profile_item() {
+    case $1 in
+    1a2b) echo "$HL_EXT._accountItems.get(0)" ;;
+    3c4d) echo "$HL_EXT._accountItems.get(1)" ;;
+    esac
+}
 setting_item() { echo "$HL_EXT._settingItems['$1']"; }
 
 open_submenu() {
@@ -339,6 +345,8 @@ menu_shot "$SHOTS/menu-account-open.png"
 for _ in 1 2 3; do refresh_now; sleep 0.5; done
 check "refreshes do not list the profiles" test "$(fake_count switch-list)" = 1
 check "a refresh keeps the Account submenu open" test "$(shell_eval "$HL_EXT._accountMenu.menu.isOpen")" = true
+checked_mark=$(shell_eval "$(profile_item 1a2b)._ornament")
+check "the selected profile's row has an ornament" test "$checked_mark" != "" -a "$checked_mark" != undefined
 shell_eval "$(profile_item 1a2b).activate(null); 'ok'" >/dev/null
 sleep 0.5
 check "activating the selected profile runs nothing" test "$(action_calls)" = ""
@@ -349,6 +357,9 @@ check "the menu stays open" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")
 check "the profiles were listed once more after the switch" test "$(fake_count switch-list)" = 2
 check "the new profile is checked" \
     test "$(shell_eval "$(profile_item 3c4d).profileSelected && !$(profile_item 1a2b).profileSelected")" = true
+check "the check mark moved to the new profile's row" \
+    test "$(shell_eval "$(profile_item 3c4d)._ornament")|$(shell_eval "$(profile_item 1a2b)._ornament")" != "$checked_mark|$checked_mark" \
+        -a "$(shell_eval "$(profile_item 3c4d)._ornament")" = "$checked_mark"
 check "the Account submenu stayed open through the switch" \
     test "$(shell_eval "$HL_EXT._accountMenu.menu.isOpen")" = true
 menu_close
@@ -463,6 +474,23 @@ for pair in needs-login:login needs-approval:approval; do
     check "and lists the profiles once" test "$(fake_count switch-list)" = $((before + 1))
     menu_close
 done
+
+begin "Expanded submenus go away with their section"
+menu_open
+wait_model "!m.accounts.loading"
+open_submenu _accountMenu
+show needs-login login
+check "Account closes and hides when the state has no Account section" \
+    test "$(shell_eval "[$HL_EXT._accountMenu.menu.isOpen, $HL_EXT._accountMenu.menu.actor.visible].join()")" = "false,false"
+menu_close
+show running connected
+menu_open
+open_submenu _settingsMenu
+show needs-approval approval
+check "Settings closes and hides the same way" \
+    test "$(shell_eval "[$HL_EXT._settingsMenu.menu.isOpen, $HL_EXT._settingsMenu.menu.actor.visible].join()")" = "false,false"
+check "the menu shows no Account or Settings text" test "$(menu_texts | grep -c 'Use Tailscale\|example.net')" = 0
+menu_close
 
 begin "Settings: each switch runs set, the menu stays open, values follow get"
 menu_open

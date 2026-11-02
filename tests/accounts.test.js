@@ -19,19 +19,29 @@ test('parseProfiles treats a missing account as empty and keeps the profile', ()
     assert.equal(profile.tailnet, 'example.org');
 });
 
-test('parseProfiles gives null for output that is not a usable list', () => {
+test('parseProfiles gives null for output that is not a list', () => {
     assert.equal(parseProfiles(''), null);
     assert.equal(parseProfiles('not json'), null);
     assert.equal(parseProfiles('{"id": "1a2b"}'), null);
-    assert.equal(parseProfiles('[]'), null);
-    // An entry without an id cannot be switched to.
-    assert.equal(parseProfiles('[{"tailnet": "example.org"}, null, 3]'), null);
-    assert.equal(parseProfiles('[{"id": ""}]'), null);
+    assert.equal(parseProfiles('null'), null);
 });
 
-test('parseProfiles skips an entry without an id and keeps the others', () => {
+test('parseProfiles reads an empty array as an empty list, and skips what is not an object', () => {
+    assert.deepEqual(parseProfiles('[]'), []);
+    assert.deepEqual(parseProfiles('[null, 3, "x", []]'), []);
+});
+
+test('parseProfiles keeps a profile without an id, which accountRows never lets be activated', () => {
     const profiles = parseProfiles('[{"tailnet": "a"}, {"id": "2", "tailnet": "b", "selected": true}]');
-    assert.deepEqual(profiles.map(profile => profile.id), ['2']);
+    assert.deepEqual(profiles.map(profile => profile.id), ['', '2']);
+    const idle = {profiles, loading: false, failed: false};
+    assert.deepEqual(accountRows(idle, null).profiles.map(row => row.sensitive), [false, true]);
+    const pending = accountRows(idle, {kind: 'switch', id: ''}).profiles;
+    assert.deepEqual(pending.map(row => row.progress), ['', '']);
+});
+
+test('accountRows shows an empty list as no row, not as a failure', () => {
+    assert.deepEqual(accountRows({profiles: [], loading: false, failed: false}, null), {profiles: []});
 });
 
 const profiles = parseProfiles(LIST);
@@ -55,6 +65,9 @@ test('accountRows names a profile without a tailnet by its nickname, then its id
         failed: false,
     }, null).profiles;
     assert.deepEqual(rows.map(row => row.title), ['work', 'b2']);
+    const bare = parseProfiles('[{"account": "alex@example.org"}]');
+    assert.equal(accountRows({profiles: bare, loading: false, failed: false}, null).profiles[0].title,
+        'alex@example.org');
     assert.deepEqual(rows.map(row => row.account), ['', '']);
 });
 

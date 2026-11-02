@@ -1,8 +1,8 @@
 /**
  * Reads the stdout of `tailscale switch --list --json`: an array of
- * `{id, nickname, tailnet, account, selected}`. Returns the usable profiles, in order, or null when
- * the output is not an array or holds no profile that can be switched to (an entry without an
- * `id` cannot be). Every other field is optional.
+ * `{id, nickname, tailnet, account, selected}`. Returns one profile per object of the array, in
+ * order (an empty array is a valid, empty list), or null when the output is not an array. Every
+ * field is optional; a profile without an `id` is listed but cannot be switched to.
  */
 export function parseProfiles(stdout) {
     let data;
@@ -15,27 +15,28 @@ export function parseProfiles(stdout) {
         return null;
     const text = value => (typeof value === 'string' ? value : '');
     const profiles = data
-        .filter(entry => entry !== null && typeof entry === 'object' && text(entry.id) !== '')
+        .filter(entry => entry !== null && typeof entry === 'object' && !Array.isArray(entry))
         .map(entry => ({
-            id: entry.id,
+            id: text(entry.id),
             tailnet: text(entry.tailnet),
             nickname: text(entry.nickname),
             account: text(entry.account),
             selected: entry.selected === true,
         }));
-    return profiles.length > 0 ? profiles : null;
+    return profiles;
 }
 
-/** What a profile row names: its tailnet, else its nickname, else its id. */
+/** What a profile row names: its tailnet, else its nickname, its id, or its account. */
 function profileTitle(profile) {
-    return profile.tailnet || profile.nickname || profile.id;
+    return profile.tailnet || profile.nickname || profile.id || profile.account;
 }
 
 /**
  * The rows of the Account submenu. `accounts` is `{profiles, loading, failed}`: the profiles of
  * the last answer or null, whether a request runs, and whether the last one failed. `pending` is
  * the action in progress, if any. Returns `{message}` for a single insensitive row of text, or
- * `{profiles}` with one `{id, title, account, selected, sensitive, progress}` per profile.
+ * `{profiles}` with one `{id, title, account, selected, sensitive, progress}` per profile, in the
+ * order of the answer (the list may be empty); a profile without an id is never sensitive.
  *
  * While an action is pending every row is insensitive and the profile being switched to shows
  * `Switching…`. While a request runs, the previous profiles stay, insensitive.
@@ -52,8 +53,8 @@ export function accountRows(accounts, pending) {
             title: profileTitle(profile),
             account: profile.account,
             selected: profile.selected,
-            sensitive: !locked,
-            progress: pending?.kind === 'switch' && pending.id === profile.id ? 'Switching…' : '',
+            sensitive: !locked && profile.id !== '',
+            progress: pending?.kind === 'switch' && profile.id !== '' && pending.id === profile.id ? 'Switching…' : '',
         })),
     };
 }
