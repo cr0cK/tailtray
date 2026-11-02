@@ -121,7 +121,19 @@ export function sectionsOf(state) {
         errorBlock: working || id === 'unavailable',
         warnings: id !== 'unavailable',
         thisDevice: id === 'connected',
+        account: working,
+        settings: id === 'connected' || id === 'disconnected',
         loginHelp: id === 'login',
         approvalHelp: id === 'approval',
     };
+}
+
+/**
+ * Which separators of the menu show. `device` and `controls` tell whether This device and the
+ * Account and Settings group have anything to show. The header group always shows, so a separator
+ * follows it when a group does, one sits between the two groups, and one precedes the footer.
+ * Two separators never touch, since a group sits between any two.
+ */
+export function separatorsOf({device, controls}) {
+    return {top: device || controls, device: device && controls, footer: true};
 }

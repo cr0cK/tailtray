@@ -8,6 +8,7 @@ import {
     panelIconModel,
     readStatus,
     sectionsOf,
+    separatorsOf,
     STATES,
     stateOfBackend,
 } from '../src/status.js';
@@ -170,12 +171,20 @@ test('the accessible name of the icon follows the label of a pending action', ()
     assert.equal(panelIconModel(STATES.disconnected, 'Connecting…').name, 'Tailscale: Connecting…');
 });
 
-test('the menu layout matches the spec table for P1', () => {
+test('the menu layout matches the spec table through P2', () => {
     const shown = id => Object.entries(sectionsOf(STATES[id])).filter(([, on]) => on).map(([name]) => name);
-    assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice']);
-    assert.deepEqual(shown('connecting'), ['identity', 'errorBlock', 'warnings']);
-    assert.deepEqual(shown('disconnected'), ['identity', 'errorBlock', 'warnings']);
+    assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice', 'account', 'settings']);
+    assert.deepEqual(shown('connecting'), ['identity', 'errorBlock', 'warnings', 'account']);
+    assert.deepEqual(shown('disconnected'), ['identity', 'errorBlock', 'warnings', 'account', 'settings']);
     assert.deepEqual(shown('login'), ['warnings', 'loginHelp']);
     assert.deepEqual(shown('approval'), ['warnings', 'approvalHelp']);
     assert.deepEqual(shown('unavailable'), ['errorBlock']);
+});
+
+test('separators sit between groups and never touch', () => {
+    const seps = (device, controls) => separatorsOf({device, controls});
+    assert.deepEqual(seps(true, true), {top: true, device: true, footer: true});
+    assert.deepEqual(seps(false, true), {top: true, device: false, footer: true});
+    assert.deepEqual(seps(true, false), {top: true, device: false, footer: true});
+    assert.deepEqual(seps(false, false), {top: false, device: false, footer: true});
 });

@@ -18,6 +18,8 @@ new `src/*.js` and `src/*.svg` files on its own.
 | `src/runner.js` | `Gio.Subprocess` runner: argument arrays, time limits, kill on destroy |
 | `src/status.js` | Connection states, status parsing, header, panel icon and layout models (pure) |
 | `src/errors.js` | The error text table (pure) |
+| `src/accounts.js` | Profile rows of `switch --list --json` and the current tailnet (pure) |
+| `src/settings.js` | Switch values of `get --json` and the `set` arguments (pure) |
 | `src/warnings.js` | Health and key expiry warnings (pure) |
 | `src/devices.js` | Device names, sorting, copyable rows (pure) |
 | `src/time.js` | Relative times (pure) |
@@ -100,6 +102,9 @@ devkit shows its own monitor, and the panel would land on an invisible one.
 - A missing executable is `GLib.SpawnError.NOENT`, not a `Gio.IOErrorEnum`.
 - Menus follow the colour scheme (light by default in GNOME 49), so text colours come from
   `PALETTES` by `St.Settings.get().color_scheme`; a fixed pale yellow is unreadable on white.
+- Only one submenu of the main menu is open at a time: opening Settings closes Account.
+- A row's `activate()` can be called on an insensitive row (Eval does, a stray keypress could):
+  switch and keep-open rows ignore it unless `reactive`.
 - A switch animates for a moment after `setToggleState`: wait before a screenshot.
 - The menu is built once in `_buildMenu()` from persistent items; refreshes update them in place
   and rebuild a section only when its content changed. Do not go back to `menu.removeAll()`:
@@ -114,6 +119,10 @@ devkit shows its own monitor, and the panel would land on an invisible one.
   that is down exits 1 with `failed to connect to local tailscaled`.
 - `tailscale` is looked up on `PATH` once, when the extension is enabled; the headless scripts
   change `PATH`, then reload the extension.
+- Each refresh runs `status --json`, then `get --json` when the backend is Running or Stopped; a
+  failing `get` leaves the switches insensitive and is not an error. `switch --list --json` is not
+  part of the refresh: the engine runs it when the Account section appears in an open menu and
+  after a switch (`Engine._syncAccounts`), so the headless checks count it in `calls.log`.
 - `TAILTRAY_TIMEOUT_SECONDS` replaces every time limit; the headless tests lower it. It is read
   when the extension is enabled.
 - Every completion checks that its engine is not destroyed: an engine lives for one enable, and a
