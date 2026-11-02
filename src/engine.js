@@ -67,8 +67,11 @@ export class Engine {
     menuClosed() {
         if (this._destroyed)
             return;
-        if (this._pending)
+        // The pending action's error is dropped too, including one that has not happened yet.
+        if (this._pending) {
             this._pending.error = null;
+            this._pending.errorDropped = true;
+        }
         if (this._model.actionError) {
             this._model.actionError = null;
             this._emit();
@@ -83,7 +86,7 @@ export class Engine {
         if (this._destroyed || this._pending)
             return false;
         this._generation++;
-        this._pending = {kind, error: null};
+        this._pending = {kind, error: null, errorDropped: false};
         this._model.actionError = null;
         this._model.pending = {kind};
         this._emit();
@@ -91,7 +94,7 @@ export class Engine {
             if (this._destroyed)
                 return;
             this._generation++;
-            if (!succeeded(result))
+            if (!succeeded(result) && !this._pending.errorDropped)
                 this._pending.error = describeFailure(result, this._deps.userName);
             this._request(true);
         });

@@ -98,6 +98,8 @@ devkit shows its own monitor, and the panel would land on an invisible one.
   overrides `activate()` and never emits the signal.
 - A subclass of a Shell item needs `GObject.registerClass`.
 - A missing executable is `GLib.SpawnError.NOENT`, not a `Gio.IOErrorEnum`.
+- Menus follow the colour scheme (light by default in GNOME 49), so text colours come from
+  `PALETTES` by `St.Settings.get().color_scheme`; a fixed pale yellow is unreadable on white.
 - A switch animates for a moment after `setToggleState`: wait before a screenshot.
 - The menu is built once in `_buildMenu()` from persistent items; refreshes update them in place
   and rebuild a section only when its content changed. Do not go back to `menu.removeAll()`:
@@ -110,6 +112,8 @@ devkit shows its own monitor, and the panel would land on an invisible one.
   (it rewrites preferences), never `sudo` or `pkexec`.
 - `status --json` exits 0 in Stopped and NeedsLogin; parse stdout before the exit code. A daemon
   that is down exits 1 with `failed to connect to local tailscaled`.
+- `tailscale` is looked up on `PATH` once, when the extension is enabled; the headless scripts
+  change `PATH`, then reload the extension.
 - `TAILTRAY_TIMEOUT_SECONDS` replaces every time limit; the headless tests lower it. It is read
   when the extension is enabled.
 - Every completion checks that its engine is not destroyed: an engine lives for one enable, and a

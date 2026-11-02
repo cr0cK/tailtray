@@ -92,18 +92,23 @@ export function headerModel(state, pending, loaded) {
     };
 }
 
-/** The panel icon for a state: which glyph, whether it is dimmed, and its badge colour. */
-export function panelIconModel(state) {
+/**
+ * The panel icon for a state: which glyph, whether it is dimmed, its badge colour, and its
+ * accessible name, which carries the header label (`label`, the state's own unless an action
+ * is pending).
+ */
+export function panelIconModel(state, label = state.label) {
+    const name = `Tailscale: ${label}`;
     switch (state.id) {
     case 'connected':
-        return {glyph: 'filled', dimmed: false, badge: null, name: `Tailscale: ${state.label}`};
+        return {glyph: 'filled', dimmed: false, badge: null, name};
     case 'login':
     case 'approval':
-        return {glyph: 'outline', dimmed: false, badge: 'warning', name: `Tailscale: ${state.label}`};
+        return {glyph: 'outline', dimmed: false, badge: 'warning', name};
     case 'unavailable':
-        return {glyph: 'outline', dimmed: true, badge: 'error', name: `Tailscale: ${state.label}`};
+        return {glyph: 'outline', dimmed: true, badge: 'error', name};
     default:
-        return {glyph: 'outline', dimmed: true, badge: null, name: `Tailscale: ${state.label}`};
+        return {glyph: 'outline', dimmed: true, badge: null, name};
     }
 }
 

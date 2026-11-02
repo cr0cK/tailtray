@@ -89,12 +89,15 @@ wait_model "m.refreshError.text.includes('operator')"
 shoot unavailable-access-denied
 fake_unset status.fail
 fake_unset status.stderr
+# The CLI is looked up on PATH when the extension is enabled.
 shell_eval "GLib.setenv('PATH', '/nonexistent', true); 'ok'" >/dev/null
-refresh_now
+ext_reload
 wait_model "m.refreshError.text.includes('not installed')"
 shoot unavailable-cli-missing
 check "CLI missing" test "$(model refreshError.text)" = "The Tailscale CLI is not installed."
 shell_eval "GLib.setenv('PATH', '$PATH_WITH_FAKE', true); 'ok'" >/dev/null
+ext_reload
+wait_model "m.loaded"
 fake_set status.stdout "<html>not json</html>"
 refresh_now
 wait_model "m.refreshError.text.includes('cannot read')"
@@ -184,6 +187,8 @@ fake_set status.sleep 2
 shell_eval "$HL_EXT._header.activate(null)" >/dev/null
 sleep 0.8
 check "label reads Disconnecting… while it runs" test "$(pending_label)" = "Disconnecting…"
+check "the panel icon's accessible name follows it" \
+    test "$(shell_eval "$HL_EXT._indicator.accessible_name")" = "Tailscale: Disconnecting…"
 check "the switch is insensitive while it runs" test "$(shell_eval "$HL_EXT._header.reactive")" = false
 check "no error before the follow-up answered" test "$(model actionError)" = null
 wait_model "m.pending === null" 10
@@ -197,6 +202,30 @@ menu_close
 menu_open
 check "a later opening shows no error" test "$(menu_texts | grep -c 'operator')" = 0
 menu_close
+
+begin "Closing the menu while a failing command runs drops its error"
+fake_set down.fail 1
+fake_set down.stderr "Access denied: prefs write access denied"
+fake_set down.sleep 2
+menu_open
+shell_eval "$HL_EXT._header.activate(null)" >/dev/null
+sleep 0.5
+menu_close
+wait_model "m.pending === null" 10
+check "no error after the follow-up answered" test "$(model actionError)" = null
+menu_open
+check "a later opening shows no error" test "$(menu_texts | grep -c 'operator')" = 0
+menu_close
+
+begin "Colours follow the light theme"
+gsettings set org.gnome.desktop.interface color-scheme "'prefer-light'"
+sleep 1
+show needs-login login
+check "the warning colour is the light one" test "$(shell_eval "$HL_EXT._palette.warning")" = "#9c6e03"
+shoot light-login-required
+gsettings set org.gnome.desktop.interface color-scheme "'prefer-dark'"
+sleep 1
+check "and the dark one again" test "$(shell_eval "$HL_EXT._palette.warning")" = "#f6d32d"
 
 begin "up past its time limit while status answers Login required leaves no error"
 fake_state stopped
@@ -253,12 +282,16 @@ menu_close
 begin "Install Tailscale opens the download page"
 shell_eval "Gio.AppInfo.launch_default_for_uri = url => { globalThis.__opened = url; return true; };
     GLib.setenv('PATH', '/nonexistent', true); 'ok'" >/dev/null
-refresh_now
+ext_reload
 wait_model "m.state.id === 'unavailable'"
 menu_open
 pointer_click "$HL_EXT._errorSection._getMenuItems()[1]"
 check "the Install Tailscale row opens the download page" \
     test "$(shell_eval "globalThis.__opened")" = "https://tailscale.com/download/linux"
+menu_open
+shell_eval "Gio.AppInfo.launch_default_for_uri = () => { throw new Error('no handler'); }; 'ok'" >/dev/null
+pointer_click "$HL_EXT._errorSection._getMenuItems()[1]"
+check "a failing launch is caught and the shell keeps working" test "$(model state.id)" = unavailable
 menu_close
 
 # --- Reading the state ------------------------------------------------------------------------

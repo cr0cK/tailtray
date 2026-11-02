@@ -263,6 +263,23 @@ test('closing the menu drops the error shown and the error of a pending action',
     assert.equal(t.model().actionError, null);
 });
 
+test('closing the menu while the command runs drops the error it fails with', async () => {
+    const t = setup();
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    t.engine.runAction('down', ['down']);
+    t.engine.menuClosed();
+    await t.answer('down', fail('Access denied: prefs write access denied'));
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().actionError, null);
+    assert.equal(t.model().pending, null);
+    // The next action reports its own error again.
+    t.engine.runAction('down', ['down']);
+    await t.answer('down', fail('boom'));
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().actionError.text, 'boom');
+});
+
 test('a failed action whose follow-up reads Login required or Approval required sets no error', async () => {
     for (const state of ['login', 'approval']) {
         const t = setup();

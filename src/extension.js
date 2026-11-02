@@ -18,7 +18,11 @@ import {headerModel, identityLine, panelIconModel, sectionsOf} from './status.js
 import {relativeTime} from './time.js';
 import {buildWarnings} from './warnings.js';
 
-const COLORS = {warning: '#f6d32d', error: '#ff7b63'};
+// Text and badge colours, readable on the dark and on the light Shell theme.
+const PALETTES = {
+    dark: {warning: '#f6d32d', error: '#ff7b63'},
+    light: {warning: '#9c6e03', error: '#c01c28'},
+};
 const DIM_OPACITY = 170;
 const OUTLINE_DIM_OPACITY = 115;
 const TITLE_STYLE = 'font-weight: bold;';
@@ -113,6 +117,9 @@ export default class TailtrayExtension extends Extension {
         this._rendering = false;
         this._warningsKey = null;
         this._errorKey = null;
+        this._schemeId = 0;
+        this._dark = true;
+        this._palette = PALETTES.dark;
         this._engine = new Engine({
             run: (args, timeoutSeconds) => this._runner.run(args, timeoutSeconds),
             setTimer: (milliseconds, callback) => GLib.timeout_add(
@@ -129,6 +136,10 @@ export default class TailtrayExtension extends Extension {
 
         this._buildIndicator();
         this._buildMenu();
+        // The Shell theme follows the colour scheme, and the colours above follow the theme.
+        this._schemeId = St.Settings.get().connect('notify::color-scheme', () => {
+            this._render(this._engine.model);
+        });
         this._render(this._engine.model);
         this._engine.start();
     }
@@ -136,6 +147,9 @@ export default class TailtrayExtension extends Extension {
     disable() {
         // Destroying the engine turns every reply still in flight into a no-op, and the runner
         // kills the processes themselves.
+        if (this._schemeId)
+            St.Settings.get().disconnect(this._schemeId);
+        this._schemeId = 0;
         this._engine?.destroy();
         this._runner?.destroy();
         this._indicator?.destroy();
@@ -242,11 +256,10 @@ export default class TailtrayExtension extends Extension {
         menu.addMenuItem(this._errorSection);
 
         this._warningLine = staticItem();
-        this._warningLabel = wrapLabel('', {style: `color: ${COLORS.warning};`});
+        this._warningLabel = wrapLabel('');
         this._warningLine.add_child(this._warningLabel);
         menu.addMenuItem(this._warningLine);
         this._warningsMenu = new PopupMenu.PopupSubMenuMenuItem('Warnings');
-        this._warningsMenu.label.style = `color: ${COLORS.warning};`;
         menu.addMenuItem(this._warningsMenu);
 
         // Separators: after the top group when This device follows, and before the footer.
@@ -320,7 +333,12 @@ export default class TailtrayExtension extends Extension {
     _openUrl(url) {
         if (!url.startsWith('https://'))
             return;
-        Gio.AppInfo.launch_default_for_uri(url, global.create_app_launch_context(0, -1));
+        try {
+            Gio.AppInfo.launch_default_for_uri(url, global.create_app_launch_context(0, -1));
+        } catch (error) {
+            // No handler for https: there is nothing to show but the log.
+            console.error(`Tailtray: could not open ${url}: ${error.message}`);
+        }
     }
 
     _render(model) {
@@ -329,9 +347,12 @@ export default class TailtrayExtension extends Extension {
         const sections = sectionsOf(model.state);
         const status = model.status;
         const now = Date.now();
+        this._dark = St.Settings.get().color_scheme === St.SystemColorScheme.PREFER_DARK;
+        this._palette = this._dark ? PALETTES.dark : PALETTES.light;
 
-        this._renderPanel(model);
-        this._renderHeader(model);
+        const header = headerModel(model.state, model.pending, model.loaded);
+        this._renderPanel(model, header.label);
+        this._renderHeader(header);
 
         const identity = sections.identity ? identityLine(status) : '';
         this._identityLabel.text = identity;
@@ -363,30 +384,29 @@ export default class TailtrayExtension extends Extension {
         this._updatedLabel.visible = updated !== '';
     }
 
-    _renderPanel(model) {
-        const icon = panelIconModel(model.state);
+    _renderPanel(model, headerLabel) {
+        const icon = panelIconModel(model.state, headerLabel);
         const file = icon.glyph === 'filled' ? 'tailtray-symbolic.svg' : 'tailtray-outline-symbolic.svg';
         this._icon.gicon = Gio.FileIcon.new(this.dir.get_child(file));
         this._icon.opacity = icon.dimmed ? OUTLINE_DIM_OPACITY : 255;
         this._badge.visible = icon.badge !== null;
         if (icon.badge) {
-            this._badge.style = `background-color: ${COLORS[icon.badge]}; border-radius: 4px; ` +
+            this._badge.style = `background-color: ${this._palette[icon.badge]}; border-radius: 4px; ` +
                 'width: 7px; height: 7px;';
         }
         this._indicator.accessible_name = icon.name;
         this._icon.accessible_name = icon.name;
     }
 
-    _renderHeader(model) {
-        const header = headerModel(model.state, model.pending, model.loaded);
-        // Updating the switch from a refresh must not look like the user's toggle.
-        const color = header.labelColor ? COLORS[header.labelColor] : null;
+    _renderHeader(header) {
+        const color = header.labelColor ? this._palette[header.labelColor] : null;
         const hasSwitch = header.switchOn !== null;
         this._header.visible = hasSwitch;
         this._staticHeader.visible = !hasSwitch;
         setStateText(this._staticStateLabel, header.label, color);
         if (!hasSwitch)
             return;
+        // Updating the switch from a refresh must not look like the user's toggle.
         this._rendering = true;
         setStateText(this._header.stateLabel, header.label, color);
         this._header.setToggleState(header.switchOn);
@@ -403,7 +423,7 @@ export default class TailtrayExtension extends Extension {
     }
 
     _renderError(error) {
-        const key = JSON.stringify(error);
+        const key = JSON.stringify([this._dark, error]);
         if (key === this._errorKey)
             return;
         this._errorKey = key;
@@ -411,7 +431,7 @@ export default class TailtrayExtension extends Extension {
         if (!error)
             return;
         const text = staticItem();
-        text.add_child(wrapLabel(error.text, {style: `color: ${COLORS.error};`}));
+        text.add_child(wrapLabel(error.text, {style: `color: ${this._palette.error};`}));
         this._errorSection.addMenuItem(text);
         if (error.command)
             this._errorSection.addMenuItem(this._copyRow(error.command, true));
@@ -424,6 +444,9 @@ export default class TailtrayExtension extends Extension {
     _renderWarnings(warnings) {
         this._warningLine.visible = warnings.length === 1;
         this._warningsMenu.visible = warnings.length > 1;
+        const warningStyle = `color: ${this._palette.warning};`;
+        this._warningLabel.style = warningStyle;
+        this._warningsMenu.label.style = warningStyle;
         const key = JSON.stringify(warnings);
         if (key === this._warningsKey)
             return;

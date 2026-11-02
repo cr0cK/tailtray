@@ -165,6 +165,11 @@ test('the accessible name of the icon carries the header label', () => {
     assert.equal(panelIconModel(STATES.connecting).name, 'Tailscale: Connecting…');
 });
 
+test('the accessible name of the icon follows the label of a pending action', () => {
+    assert.equal(panelIconModel(STATES.connected, 'Disconnecting…').name, 'Tailscale: Disconnecting…');
+    assert.equal(panelIconModel(STATES.disconnected, 'Connecting…').name, 'Tailscale: Connecting…');
+});
+
 test('the menu layout matches the spec table for P1', () => {
     const shown = id => Object.entries(sectionsOf(STATES[id])).filter(([, on]) => on).map(([name]) => name);
     assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice']);

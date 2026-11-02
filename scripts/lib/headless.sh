@@ -124,7 +124,7 @@ JS
 
 shell_start() {
     gnome-shell --headless --wayland --no-x11 --wayland-display="$WAYLAND_DISPLAY" \
-        --virtual-monitor 1280x800 >"$WORK/shell.log" 2>&1 &
+        --virtual-monitor 1280x800 >>"$WORK/shell.log" 2>&1 &
     HL_SHELL_PID=$!
     wait_for "Main.extensionManager.lookup('$HL_UUID')?.state === 1"
     wait_for "Main.layoutManager._startingUp === false"
