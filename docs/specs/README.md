@@ -13,7 +13,8 @@ delivery is recorded as stamps in its tracking issue.
 - **Commits and PR titles**: Conventional Commits, squash-merged, so the PR title is the commit
   release-please reads. A spec PR is `docs:`, a plan PR is usually `feat:`.
 - **Checks**: `npm run lint` and `make check` must pass. A user-visible change is verified in a
-  headless GNOME Shell 49 driven by the agent, as AGENTS.md describes, with screenshots looked
+  headless GNOME Shell 49 driven by the agent, as AGENTS.md describes (`scripts/verify.sh
+  2>/dev/null` runs the scenarios against `scripts/fake-tailscale`), with screenshots looked
   at; README screenshots live in `docs/screenshots/`.
 - **Reviewers**: Codex read-only (`codex exec --sandbox read-only ... < /dev/null`), then Gemini
   through `agy` in plan mode with `--sandbox`, then a fresh-context agent.

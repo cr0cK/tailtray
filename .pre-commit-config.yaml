@@ -1,0 +1,70 @@
+# Install once after cloning: pre-commit install --install-hooks
+# (installs both the pre-commit and commit-msg hooks below).
+default_install_hook_types: [pre-commit, commit-msg]
+# Hooks run on pre-commit only; the Conventional Commit check opts into commit-msg below.
+default_stages: [pre-commit]
+exclude: '^(node_modules|dist)/'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-json
+      - id: check-xml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-executables-have-shebangs
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.32.0
+    hooks:
+      - id: typos
+        # Report only: a human decides between fixing a word and allowing it in _typos.toml.
+        args: [--force-exclude]
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.36.1
+    hooks:
+      - id: check-github-workflows
+      - id: check-dependabot
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        entry: npx --no-install eslint --max-warnings=0
+        language: system
+        types: [javascript]
+
+      - id: unit-tests
+        name: unit tests
+        entry: npm test
+        language: system
+        types: [javascript]
+        pass_filenames: false
+
+      - id: gsettings-schema
+        name: gsettings schema
+        entry: glib-compile-schemas --strict --dry-run src/schemas
+        language: system
+        files: ^src/schemas/
+        pass_filenames: false
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert]

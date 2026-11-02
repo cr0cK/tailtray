@@ -1,0 +1,14 @@
+{
+  "accept-dns": true,
+  "accept-routes": false,
+  "advertise-connector": false,
+  "advertise-exit-node": false,
+  "advertise-routes": "",
+  "auto-update": true,
+  "exit-node": "",
+  "exit-node-allow-lan-access": false,
+  "hostname": "laptop",
+  "operator": "alex",
+  "shields-up": false,
+  "ssh": false
+}

@@ -1,0 +1,60 @@
+{
+  "Version": "1.104.2-tc3430f0d2",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": ["100.64.0.1", "fd7a:115c:a1e0::1"],
+  "Self": {
+    "ID": "nSELF000000000",
+    "HostName": "laptop",
+    "DNSName": "laptop.tail1234.ts.net.",
+    "OS": "linux",
+    "UserID": 1001,
+    "TailscaleIPs": ["100.64.0.1", "fd7a:115c:a1e0::1"],
+    "Online": true,
+    "ExitNode": false,
+    "ExitNodeOption": false,
+    "KeyExpiry": "2099-01-01T00:00:00Z"
+  },
+  "Health": [],
+  "MagicDNSSuffix": "tail1234.ts.net",
+  "CurrentTailnet": {
+    "Name": "example.org",
+    "MagicDNSSuffix": "tail1234.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "Peer": {
+    "nodekey:aaaa": {
+      "ID": "nPEER000000001",
+      "HostName": "nas",
+      "DNSName": "nas.tail1234.ts.net.",
+      "OS": "linux",
+      "UserID": 1001,
+      "TailscaleIPs": ["100.64.0.2", "fd7a:115c:a1e0::2"],
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": true,
+      "LastSeen": "2026-11-02T14:19:00Z"
+    },
+    "nodekey:bbbb": {
+      "ID": "nPEER000000002",
+      "HostName": "phone",
+      "DNSName": "phone.tail1234.ts.net.",
+      "OS": "android",
+      "UserID": 1001,
+      "TailscaleIPs": ["100.64.0.3"],
+      "Online": false,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "LastSeen": "2026-11-01T09:00:00Z"
+    }
+  },
+  "User": {
+    "1001": {
+      "ID": 1001,
+      "LoginName": "alex@example.org",
+      "DisplayName": "Alex Example"
+    }
+  }
+}

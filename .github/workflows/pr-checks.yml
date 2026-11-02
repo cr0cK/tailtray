@@ -1,0 +1,68 @@
+name: PR checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, test, and package
+    runs-on: ubuntu-latest
+    # Fedora ships the same GNOME Shell tooling as the extension's target (gnome-extensions pack).
+    container: fedora:43
+    steps:
+      - name: Install build tools
+        run: dnf install -y --setopt=install_weak_deps=False gnome-shell glib2 make nodejs npm git
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Validate schema, parse modules, run tests, and package
+        run: make check
+
+  hooks:
+    name: Pre-commit hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Run hooks on every file
+        # Unit tests and schema validation run in the check job, on the GNOME toolchain. The
+        # gitleaks hook only scans staged changes, which a CI checkout has none of.
+        env:
+          SKIP: unit-tests,gsettings-schema,gitleaks
+        run: pipx run pre-commit run --all-files --show-diff-on-failure
+
+      - name: Scan the full history for secrets
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check
+          tar -xzf "${archive}" gitleaks
+          ./gitleaks git --no-banner --redact --log-opts=--all .
