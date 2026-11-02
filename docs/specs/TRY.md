@@ -25,8 +25,10 @@ preferences window.
 ## Audience and environment
 
 - Personal use on GNOME Shell 49, on Linux.
-- The `tailscale` CLI and the `tailscaled` service must be installed. Tailtray finds `tailscale`
-  on `PATH` when the extension is enabled.
+- The `tailscale` CLI and the `tailscaled` service must be installed, version 1.104 or later.
+  Tailtray finds `tailscale` on `PATH` when the extension is enabled. With an older version, a
+  command that does not exist fails and shows its error as Errors describes; Tailtray does not
+  check the version.
 - Actions that change Tailscale (connect, disconnect, switch, set) need the user to be the
   Tailscale operator (`tailscale set --operator=$USER`, run once with sudo). Reading the state
   does not.
@@ -46,11 +48,17 @@ preferences window.
   - when the menu opens;
   - right after every action Tailtray runs, whether it succeeded or failed;
   - when **Refresh now** is activated.
+- A refresh succeeds when `tailscale status --json` succeeds. When only `tailscale get --json`
+  fails, the refresh still succeeds: the switches that need its values are insensitive (see
+  Settings and Exit node), and nothing else changes.
 - A failed refresh keeps the last good state in memory for notifications, but the menu and the
   icon show the failure (see Unavailable).
+- The result of a refresh that started before the last action ended is discarded, so a refresh
+  never shows the state from before an action, and never mixes two accounts.
 - A refresh while the menu is open updates the menu in place: the expanded submenu, the expanded
   device, and each device's last ping result stay as they are, as long as that submenu or device
   still exists.
+- Updating a switch from a refresh never runs a command. Only a user's toggle does.
 
 ## Connection states
 
@@ -116,12 +124,13 @@ Settings, and before the footer. Two separators never touch.
 
 ### Login required and Approval required
 
-- Login required shows a **Log in…** row under the header. Activating it:
-  - opens `AuthURL` of the status in the default browser when it is not empty;
-  - otherwise runs `tailscale login` with no argument, reads its output until the first line
-    holding an `https://` URL, opens that URL in the default browser, and lets the process run
-    until it exits or 10 minutes pass, then kills it;
-  - while the process runs, the row reads `Waiting for login…` and is insensitive.
+- Login required shows, under the header:
+  - when `AuthURL` of the status is an `https://` URL, a **Log in…** row that opens it in the
+    default browser;
+  - otherwise, the line `Log in from a terminal:` and the command `tailscale up` on a row with a
+    copy icon, as in the error block.
+- Tailtray never runs `tailscale login`: it would start a new, empty profile instead of logging
+  the current one back in.
 - Approval required shows the line `An admin must approve this device.` and an **Open admin
   console** row that opens `https://login.tailscale.com/admin/machines`.
 
@@ -157,8 +166,11 @@ Settings, and before the footer. Two separators never touch.
 
 - A submenu row **Account** with the current tailnet on its right, followed by one row per
   profile of `tailscale switch --list --json`.
-- `tailscale switch --list --json` runs when the menu opens, not on every refresh. Until it
-  answers, the submenu shows the profiles of the last answer, or none.
+- `tailscale switch --list --json` runs when the menu opens and after every account switch, not
+  on every refresh.
+- Until it answers, the submenu shows the profiles of the last answer, insensitive, or a single
+  insensitive `Loading…` row when there was none. When it fails, the submenu shows a single
+  insensitive `Could not list accounts` row.
 - Each profile row shows the tailnet, and the account under it in dim text. The profile whose
   `selected` is true has a check mark.
 - Activating another profile runs `tailscale switch <id>`. Activating the selected profile does
@@ -168,18 +180,22 @@ Settings, and before the footer. Two separators never touch.
 ### Exit node
 
 - A submenu row **Exit node** with the exit node in use on its right, or `None`.
-- Its rows are **None**, then every peer whose `ExitNodeOption` is true, sorted by name (see
-  Device names), then an **Allow LAN access** switch.
+- Its rows are **None**, then every peer whose `ExitNodeOption` or `ExitNode` is true, sorted by
+  name (see Device names), then an **Allow LAN access** switch.
 - Each exit node row shows a dot, green when the peer is online, grey when not. An offline peer's
   row is insensitive and shows an `offline` badge, unless it is the exit node in use.
-- The exit node in use is the peer whose `ExitNode` is true. Its row has a check mark. With none,
-  **None** has the check mark.
-- Activating an exit node runs `tailscale set --exit-node=<its first IPv4 address>`. Activating
-  **None** runs `tailscale set --exit-node=`. Activating the row already checked does nothing.
+- The exit node in use is the peer whose `ExitNode` is true. Its row has a check mark, even when
+  the peer is no longer an exit node option. With none, **None** has the check mark.
+- Activating an exit node runs `tailscale set --exit-node=<address>`, where the address is its
+  first IPv4 address, or its first IPv6 address when it has no IPv4 one. A peer with neither has
+  an insensitive row. Activating **None** runs `tailscale set --exit-node=`. Activating the row
+  already checked does nothing.
 - **Allow LAN access** shows `exit-node-allow-lan-access` of `tailscale get --json`, and toggling
   it runs `tailscale set --exit-node-allow-lan-access=<true|false>`. The switch is shown even with
-  no exit node in use; the setting applies once one is chosen.
-- With no exit node available, the submenu row is insensitive and reads `None available`.
+  no exit node in use; the setting applies once one is chosen. It is insensitive when
+  `tailscale get --json` failed or lacks the value.
+- With no exit node in use and no peer to list, the submenu row is insensitive and reads
+  `None available`.
 - When the exit node in use goes offline, its row keeps the check mark and shows the `offline`
   badge, and the panel keeps the exit node icon.
 
@@ -214,16 +230,20 @@ Settings, and before the footer. Two separators never touch.
     hidden when missing, exactly as in This device;
   - a **Ping** row.
 - **Ping** is insensitive when the peer is offline or has no IPv4 address. Activating it runs
-  `tailscale ping -c 1 --timeout 5s <first IPv4 address>`, keeps the menu open, and shows on the
-  row's right:
+  `tailscale ping -c 1 --until-direct=false --timeout 5s <first IPv4 address>`, keeps the menu
+  open, and shows on the row's right:
   - `…` while it runs;
   - `direct · <ms> ms` for a pong through a direct path;
   - `relay <region> · <ms> ms` for a pong through DERP;
   - `peer relay · <ms> ms` for a pong through a peer relay;
   - `no answer` when the command times out or reports no pong;
   - `error` for anything else.
-- The milliseconds are the pong's latency, rounded to the integer. A ping result stays on the row
-  until the menu closes.
+- A pong found in the output wins over the exit code. The milliseconds are the pong's latency,
+  rounded to the integer.
+- A ping result stays on the row until the menu closes. Closing the menu kills every ping still
+  running, and its result is never shown.
+- Pings are not actions: they run while an action runs, and one device's ping does not block
+  another's. A second **Ping** on a device whose ping still runs does nothing.
 
 ### Footer
 
@@ -247,16 +267,25 @@ Settings, and before the footer. Two separators never touch.
 ## Copying
 
 - Copying puts the value in the clipboard (the regular clipboard, not the primary selection),
-  closes the menu, and shows the Shell's on-screen display with `Copied <value>`.
+  closes the menu, and shows the Shell's on-screen display on the current monitor, with the
+  `edit-copy-symbolic` icon and `Copied <value>`.
+- Copying is not an action: it runs no command.
 
 ## Actions
 
+- An action is a command that changes Tailscale: the header switch, an account switch, an exit
+  node, **Allow LAN access**, and the Settings switches.
 - Every action runs one `tailscale` command, with an argument array and no shell.
-- While an action runs, the row that started it is insensitive. Other actions stay available.
+- One action runs at a time. While it runs, the row that started it is insensitive and shows its
+  progress, and every other action row is insensitive too.
 - After the action ends, Tailtray refreshes, whether the action succeeded or failed.
-- Actions keep the menu open, except copying.
-- Each action, other than `tailscale login` and `tailscale ping`, is killed after 30 seconds, and
-  a killed action fails with `The command timed out.`
+- Actions keep the menu open.
+
+## Commands and time limits
+
+- Every `tailscale` command Tailtray starts is killed when its time limit passes: 10 seconds for
+  `tailscale ping`, 30 seconds for every other command, reads included.
+- A killed read is a failed read; a killed action fails with `The command timed out.`
 
 ## Errors
 
@@ -277,20 +306,23 @@ The error text depends on the failure, checked in this order:
 
 - Notifications go through one Tailtray notification source. They are sent only when the
   **Notifications** preference is on.
-- The first refresh after the extension is enabled sets a baseline and sends no transition
-  notification. The key expiry notification is not a transition and can be sent then.
-- **Connection lost**: the previous refresh was Connected and this one is not, and no header
-  switch, account switch, or exit node action of Tailtray started in the last 30 seconds. The
-  body is the new header label.
-- **Login required**: the state becomes Login required or Approval required, from any other
-  state. Activating the notification does what **Log in…** or **Open admin console** does.
-- **Exit node offline**: the exit node in use was online at the previous refresh and is offline
-  now. The body names it.
-- **Key expiring**: `Self.KeyExpiry` is within 7 days and differs from the last expiry Tailtray
-  notified, which it stores in settings. The body is the warning text. A new key, with a new
-  expiry, can be notified again.
-- Activating any other notification opens the menu.
+- The first successful refresh after the extension is enabled sets a baseline and sends no
+  transition notification. Failed refreshes before it do not count. The key expiry notification
+  is not a transition and can be sent then.
 - A failed refresh is not a transition: the next good refresh is compared with the last good one.
+  "Previous" below means the last good refresh, and an Unavailable refresh is never compared.
+- **Connection lost**: the previous refresh was Connected and this one is not, and no action of
+  Tailtray started in the last 30 seconds. The body is the new header label.
+- **Login required**: the state becomes Login required or Approval required, from any other
+  state. Activating the notification opens the menu. The notification is withdrawn once the
+  state leaves Login required and Approval required.
+- **Exit node offline**: the same peer, by its `ID`, was the exit node in use and online at the
+  previous refresh, and is the exit node in use and offline now. The body names it.
+- **Key expiring**: `Self.KeyExpiry` is within 7 days and the pair (`Self.ID`, `KeyExpiry`) is not
+  among the pairs Tailtray already notified, which it stores in settings, keeping the last 10.
+  The body is the warning text. A new key, with a new expiry, or another device of another
+  account, can be notified again.
+- Activating any other notification opens the menu.
 
 ## Preferences
 
@@ -300,13 +332,17 @@ The error text depends on the failure, checked in this order:
   - the installed version, from `version-name` of the metadata.
 - Changes apply at once, without a save button, and persist across GNOME Shell restarts.
 - The settings schema holds `refresh-interval` (unsigned integer, seconds), `notifications`
-  (boolean), and `notified-key-expiry` (string, the last notified `KeyExpiry`, empty by default).
+  (boolean), and `notified-key-expiries` (array of strings, each `<Self.ID> <KeyExpiry>`, empty
+  by default).
+- A new refresh interval takes effect from the next scheduled refresh.
 
 ## Lifecycle
 
 - Enabling the extension adds the icon and starts the first refresh.
 - Disabling it cancels the timer, kills every running `tailscale` process it started, destroys
   the menu and the notification source, and leaves no signal connected.
+- A command that ends after the extension was disabled changes nothing, even if the extension
+  was enabled again in the meantime.
 - Locking the screen disables extensions the session mode does not allow; Tailtray does not run
   on the lock screen.
 
