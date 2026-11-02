@@ -1,0 +1,330 @@
+---
+code: TRY
+status: draft
+version: v0.1
+tracking: "#1"
+plans:
+  TRY-P1: todo
+  TRY-P2: todo
+  TRY-P3: todo
+  TRY-P4: todo
+  TRY-P5: todo
+---
+
+# Tailtray — TRY specification
+
+TRY covers the first release of Tailtray, a GNOME Shell 49 extension that shows and controls the
+local Tailscale node from the top bar by calling the `tailscale` CLI. It covers the panel icon,
+connecting and disconnecting, the identity and addresses of this device, switching between
+accounts that are already logged in, choosing an exit node, three Tailscale settings, the list of
+the other devices of the tailnet with copy and ping actions, desktop notifications, and the
+preferences window.
+
+![Menu mockups](images/TRY-menu.png)
+
+## Audience and environment
+
+- Personal use on GNOME Shell 49, on Linux.
+- The `tailscale` CLI and the `tailscaled` service must be installed. Tailtray finds `tailscale`
+  on `PATH` when the extension is enabled.
+- Actions that change Tailscale (connect, disconnect, switch, set) need the user to be the
+  Tailscale operator (`tailscale set --operator=$USER`, run once with sudo). Reading the state
+  does not.
+- Tailtray talks to the default `tailscaled` socket only.
+- The extension is named Tailtray, its UUID is `tailtray@cr0ck.github.io`, and its settings live
+  under `org.gnome.shell.extensions.tailtray`. All UI text is in English.
+
+## Reading the state
+
+- Each refresh runs `tailscale status --json`, then, when it succeeded and the backend is
+  `Running` or `Stopped`, `tailscale get --json`. The two calls run one after the other.
+- Only one refresh runs at a time. A refresh requested while one runs is queued once; further
+  requests while one is queued are dropped.
+- A refresh runs:
+  - when the extension is enabled;
+  - every refresh interval (see Preferences), counted from the end of the previous refresh;
+  - when the menu opens;
+  - right after every action Tailtray runs, whether it succeeded or failed;
+  - when **Refresh now** is activated.
+- A failed refresh keeps the last good state in memory for notifications, but the menu and the
+  icon show the failure (see Unavailable).
+- A refresh while the menu is open updates the menu in place: the expanded submenu, the expanded
+  device, and each device's last ping result stay as they are, as long as that submenu or device
+  still exists.
+
+## Connection states
+
+Tailtray derives one state from `BackendState` of `tailscale status --json`:
+
+| State | When | Header label |
+|---|---|---|
+| Connected | `Running` | `Connected` |
+| Connecting | `Starting` or `NoState` | `Connecting…` |
+| Disconnected | `Stopped` | `Disconnected` |
+| Login required | `NeedsLogin` | `Login required` |
+| Approval required | `NeedsMachineAuth` | `Waiting for approval` |
+| Unavailable | The CLI is missing, the call fails, times out, or prints JSON Tailtray cannot read, or `BackendState` has any other value | `Unavailable` |
+
+## Panel icon
+
+- The panel shows one symbolic icon and no text. The icon is Tailtray's own glyph, not the
+  Tailscale logo.
+- Connected: the full glyph.
+- Connected through an exit node: the full glyph with an arrow badge.
+- Connecting and Disconnected: the glyph outlined and dimmed.
+- Login required and Approval required: the outlined glyph with a yellow dot badge.
+- Unavailable: the dimmed glyph with a red dot badge.
+- The icon's accessible name is `Tailscale: <header label>`.
+
+## Menu layout
+
+The menu shows these sections, top to bottom. A section that a state does not list is hidden.
+
+| Section | Connected | Connecting | Disconnected | Login / Approval required | Unavailable |
+|---|---|---|---|---|---|
+| Header | yes | yes | yes | yes | yes |
+| Identity line | yes | yes | yes | no | no |
+| Error block | when set | when set | when set | when set | yes |
+| Warnings | when any | when any | when any | when any | no |
+| This device | yes | no | no | no | no |
+| Account | yes | yes | yes | yes | no |
+| Exit node | yes | no | no | no | no |
+| Settings | yes | no | yes | no | no |
+| Other devices | yes | no | no | no | no |
+| Footer | yes | yes | yes | yes | yes |
+
+Separators sit between groups as in the mockup: after the warnings, after This device, after
+Settings, and before the footer. Two separators never touch.
+
+### Header
+
+- A row with the title `Tailscale`, the header label, and a switch.
+- The switch shows on in Connected and Connecting, off in Disconnected, and is absent in the other
+  states. In Login required, Approval required, and Unavailable the header label is colored:
+  yellow for the first two, red for Unavailable.
+- Turning the switch on runs `tailscale up` with no argument. Turning it off runs
+  `tailscale down`. Activating the row toggles the switch. The menu stays open.
+- While either command runs, the switch is insensitive and the label reads `Connecting…` or
+  `Disconnecting…`. The next refresh sets the real state.
+- `tailscale up` is never run with flags: with any flag, it would rewrite preferences.
+
+### Identity line
+
+- One dim line: `<tailnet> · <login name>`, where the tailnet is `CurrentTailnet.Name` and the
+  login name is `User[Self.UserID].LoginName`.
+- A missing part is left out with its separator. With both missing, the line is hidden.
+
+### Login required and Approval required
+
+- Login required shows a **Log in…** row under the header. Activating it:
+  - opens `AuthURL` of the status in the default browser when it is not empty;
+  - otherwise runs `tailscale login` with no argument, reads its output until the first line
+    holding an `https://` URL, opens that URL in the default browser, and lets the process run
+    until it exits or 10 minutes pass, then kills it;
+  - while the process runs, the row reads `Waiting for login…` and is insensitive.
+- Approval required shows the line `An admin must approve this device.` and an **Open admin
+  console** row that opens `https://login.tailscale.com/admin/machines`.
+
+### Error block
+
+- An action that fails sets the error block: a few lines of text under the header, built as in
+  Errors. It stays until the menu closes or the next action starts.
+- In Unavailable, the error block explains the failure of the last refresh, and stays until a
+  refresh succeeds.
+- A command shown in the error block, such as the operator command, sits on its own row with a
+  copy icon; activating the row copies the command.
+
+### Warnings
+
+- Warnings come from `Health` of the status, in its order, after removing the entry
+  `Tailscale is stopped.` (the header already says it).
+- When this device's `Self.KeyExpiry` is within 7 days, a first warning reads
+  `This device's key expires in <n> days.` (`in less than a day` under 24 hours, and
+  `This device's key has expired.` once past). A missing or zero `KeyExpiry` means the key does
+  not expire.
+- One warning shows as a yellow line under the identity line. Two or more show as a collapsed
+  **Warnings (<n>)** submenu, one line each.
+- Each warning line wraps; it is not truncated.
+
+### This device
+
+- A dim caption `This device`, then three rows: the MagicDNS name (`Self.DNSName` without its
+  trailing dot), the first IPv4 address, and the first IPv6 address of `Self.TailscaleIPs`.
+- Each row ends with a copy icon. Activating a row copies its value (see Copying).
+- A missing value hides its row. With no value at all, the caption is hidden too.
+
+### Account
+
+- A submenu row **Account** with the current tailnet on its right, followed by one row per
+  profile of `tailscale switch --list --json`.
+- `tailscale switch --list --json` runs when the menu opens, not on every refresh. Until it
+  answers, the submenu shows the profiles of the last answer, or none.
+- Each profile row shows the tailnet, and the account under it in dim text. The profile whose
+  `selected` is true has a check mark.
+- Activating another profile runs `tailscale switch <id>`. Activating the selected profile does
+  nothing.
+- Logging in to a new account, logging out, and removing an account are not offered.
+
+### Exit node
+
+- A submenu row **Exit node** with the exit node in use on its right, or `None`.
+- Its rows are **None**, then every peer whose `ExitNodeOption` is true, sorted by name (see
+  Device names), then an **Allow LAN access** switch.
+- Each exit node row shows a dot, green when the peer is online, grey when not. An offline peer's
+  row is insensitive and shows an `offline` badge, unless it is the exit node in use.
+- The exit node in use is the peer whose `ExitNode` is true. Its row has a check mark. With none,
+  **None** has the check mark.
+- Activating an exit node runs `tailscale set --exit-node=<its first IPv4 address>`. Activating
+  **None** runs `tailscale set --exit-node=`. Activating the row already checked does nothing.
+- **Allow LAN access** shows `exit-node-allow-lan-access` of `tailscale get --json`, and toggling
+  it runs `tailscale set --exit-node-allow-lan-access=<true|false>`. The switch is shown even with
+  no exit node in use; the setting applies once one is chosen.
+- With no exit node available, the submenu row is insensitive and reads `None available`.
+- When the exit node in use goes offline, its row keeps the check mark and shows the `offline`
+  badge, and the panel keeps the exit node icon.
+
+### Settings
+
+- A submenu row **Settings** with three switches. Each shows a value of `tailscale get --json`
+  and toggling it runs `tailscale set` with that flag:
+
+| Row | Value | Command |
+|---|---|---|
+| Use Tailscale subnets | `accept-routes` | `tailscale set --accept-routes=<true\|false>` |
+| Use Tailscale DNS | `accept-dns` | `tailscale set --accept-dns=<true\|false>` |
+| Block incoming connections | `shields-up` | `tailscale set --shields-up=<true\|false>` |
+
+- When `tailscale get --json` failed or lacks a value, that switch is insensitive.
+- Toggling a switch keeps the menu open.
+
+### Other devices
+
+- A dim caption `Other devices · <online> of <total> online`, counting the listed devices.
+- One row per peer of `Peer` in the status, except peers that have a `Location` field (Mullvad
+  exit nodes, which appear only under Exit node).
+- Order: online peers first, then offline ones, each group sorted by name (see Device names).
+- A row shows a dot (green online, grey offline), the name, and on its right the peer's `OS`
+  when online, or how long ago it was last seen when offline (see Relative times). Offline names
+  are dimmed.
+- With no peer to list, the caption reads `No other devices` and there is no row.
+- The rows sit in a scrolling area at most 280 pixels high.
+- Each row expands in place, like a submenu; expanding one collapses the one that was open. The
+  expanded part shows:
+  - the MagicDNS name, the first IPv4 address, and the first IPv6 address, each with a copy icon,
+    hidden when missing, exactly as in This device;
+  - a **Ping** row.
+- **Ping** is insensitive when the peer is offline or has no IPv4 address. Activating it runs
+  `tailscale ping -c 1 --timeout 5s <first IPv4 address>`, keeps the menu open, and shows on the
+  row's right:
+  - `…` while it runs;
+  - `direct · <ms> ms` for a pong through a direct path;
+  - `relay <region> · <ms> ms` for a pong through DERP;
+  - `peer relay · <ms> ms` for a pong through a peer relay;
+  - `no answer` when the command times out or reports no pong;
+  - `error` for anything else.
+- The milliseconds are the pong's latency, rounded to the integer. A ping result stays on the row
+  until the menu closes.
+
+### Footer
+
+- **Refresh now**, with `updated <relative time>` on its right after the first refresh that
+  succeeded. Activating it refreshes and keeps the menu open.
+- **Preferences** opens the preferences window.
+
+## Device names
+
+- A device's name is the first label of its `DNSName`. When `DNSName` is empty, it is its
+  `HostName`.
+- Sorting compares names case-insensitively.
+
+## Relative times
+
+- Under one minute: `just now`. Under one hour: `<n> min ago`. Under one day: `<n> h ago`. Under
+  30 days: `<n> days ago` (`1 day ago` for one). Then `<n> months ago` (`1 month ago`), counting
+  30 days per month.
+- A `LastSeen` that is missing or the zero time shows nothing.
+
+## Copying
+
+- Copying puts the value in the clipboard (the regular clipboard, not the primary selection),
+  closes the menu, and shows the Shell's on-screen display with `Copied <value>`.
+
+## Actions
+
+- Every action runs one `tailscale` command, with an argument array and no shell.
+- While an action runs, the row that started it is insensitive. Other actions stay available.
+- After the action ends, Tailtray refreshes, whether the action succeeded or failed.
+- Actions keep the menu open, except copying.
+- Each action, other than `tailscale login` and `tailscale ping`, is killed after 30 seconds, and
+  a killed action fails with `The command timed out.`
+
+## Errors
+
+The error text depends on the failure, checked in this order:
+
+| Failure | Text |
+|---|---|
+| `tailscale` is not on `PATH` | `The Tailscale CLI is not installed.` and a row **Install Tailscale** that opens `https://tailscale.com/download/linux` |
+| The output mentions `failed to connect to local tailscaled` or `is Tailscale running?` | `The Tailscale service is not running.` and the command `sudo systemctl enable --now tailscaled` |
+| The output mentions `Access denied` or `access denied` | `Tailtray needs you to be the Tailscale operator.` and the command `sudo tailscale set --operator=<user name>` |
+| A timeout | `The command timed out.` |
+| A status Tailtray cannot read | `Tailscale returned a status Tailtray cannot read.` |
+| Anything else | The first non-empty line of the command's standard error, or `The command failed.` when it is empty |
+
+- The user name is the login name of the user running GNOME Shell.
+
+## Notifications
+
+- Notifications go through one Tailtray notification source. They are sent only when the
+  **Notifications** preference is on.
+- The first refresh after the extension is enabled sets a baseline and sends no transition
+  notification. The key expiry notification is not a transition and can be sent then.
+- **Connection lost**: the previous refresh was Connected and this one is not, and no header
+  switch, account switch, or exit node action of Tailtray started in the last 30 seconds. The
+  body is the new header label.
+- **Login required**: the state becomes Login required or Approval required, from any other
+  state. Activating the notification does what **Log in…** or **Open admin console** does.
+- **Exit node offline**: the exit node in use was online at the previous refresh and is offline
+  now. The body names it.
+- **Key expiring**: `Self.KeyExpiry` is within 7 days and differs from the last expiry Tailtray
+  notified, which it stores in settings. The body is the warning text. A new key, with a new
+  expiry, can be notified again.
+- Activating any other notification opens the menu.
+- A failed refresh is not a transition: the next good refresh is compared with the last good one.
+
+## Preferences
+
+- An Adwaita preferences window with:
+  - **Refresh interval**: 5, 10, 30, or 60 seconds, default 10;
+  - **Notifications**: a switch, default on;
+  - the installed version, from `version-name` of the metadata.
+- Changes apply at once, without a save button, and persist across GNOME Shell restarts.
+- The settings schema holds `refresh-interval` (unsigned integer, seconds), `notifications`
+  (boolean), and `notified-key-expiry` (string, the last notified `KeyExpiry`, empty by default).
+
+## Lifecycle
+
+- Enabling the extension adds the icon and starts the first refresh.
+- Disabling it cancels the timer, kills every running `tailscale` process it started, destroys
+  the menu and the notification source, and leaves no signal connected.
+- Locking the screen disables extensions the session mode does not allow; Tailtray does not run
+  on the lock screen.
+
+## Security and privacy
+
+- Tailtray stores no credential and reads no file of Tailscale. It knows only what the CLI prints.
+- Commands run with an argument array and no shell. No device name, address, or URL goes through
+  a shell.
+- Only `https://` URLs are opened.
+- Tailtray writes only its own settings.
+
+## Out of scope
+
+- Logging in to an additional account, logging out, and removing an account.
+- Advertising this device as an exit node or advertising routes.
+- Grouping Mullvad exit nodes by country, and the suggested exit node.
+- Taildrop, Serve, Funnel, Tailscale SSH, tailnet lock, and Tailscale Drive.
+- Opening a terminal or a browser on another device.
+- A GNOME Quick Settings toggle.
+- A `tailscaled` socket other than the default one, and talking to the LocalAPI directly.
+- GNOME Shell versions other than 49, and translations.
