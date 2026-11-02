@@ -96,12 +96,16 @@ wait_model "m.refreshError.text.includes('not installed')"
 shoot unavailable-cli-missing
 check "CLI missing" test "$(model refreshError.text)" = "The Tailscale CLI is not installed."
 shell_eval "GLib.setenv('PATH', '$PATH_WITH_FAKE', true); 'ok'" >/dev/null
+# A slow fake stays visible as a process for the whole check, so a spawn cannot go unnoticed.
+fake_set status.sleep 5
 calls_before=$(fake_count status)
 refresh_now
 sleep 1
 check "a CLI that appears on PATH later is not found until the extension is enabled again" \
     test "$(model refreshError.text)" = "The Tailscale CLI is not installed."
-check "no command reached the fake in the meantime" test "$(fake_count status)" = "$calls_before"
+check "no command was started in the meantime" \
+    test "$(pids_of_fake)$(fake_count status)" = "0$calls_before"
+fake_unset status.sleep
 ext_reload
 wait_model "m.loaded"
 check "found once enabled again" test "$(model state.id)" = connected
