@@ -345,8 +345,9 @@ menu_shot "$SHOTS/menu-account-open.png"
 for _ in 1 2 3; do refresh_now; sleep 0.5; done
 check "refreshes do not list the profiles" test "$(fake_count switch-list)" = 1
 check "a refresh keeps the Account submenu open" test "$(shell_eval "$HL_EXT._accountMenu.menu.isOpen")" = true
-checked_mark=$(shell_eval "$(profile_item 1a2b)._ornament")
-check "the selected profile's row has an ornament" test "$checked_mark" != "" -a "$checked_mark" != undefined
+# PopupMenu.Ornament: NONE is 0 and CHECK is 2.
+check "the selected profile's row shows the check mark, the other none" \
+    test "$(shell_eval "$(profile_item 1a2b)._ornament + '|' + $(profile_item 3c4d)._ornament")" = "2|0"
 shell_eval "$(profile_item 1a2b).activate(null); 'ok'" >/dev/null
 sleep 0.5
 check "activating the selected profile runs nothing" test "$(action_calls)" = ""
@@ -358,8 +359,7 @@ check "the profiles were listed once more after the switch" test "$(fake_count s
 check "the new profile is checked" \
     test "$(shell_eval "$(profile_item 3c4d).profileSelected && !$(profile_item 1a2b).profileSelected")" = true
 check "the check mark moved to the new profile's row" \
-    test "$(shell_eval "$(profile_item 3c4d)._ornament")|$(shell_eval "$(profile_item 1a2b)._ornament")" != "$checked_mark|$checked_mark" \
-        -a "$(shell_eval "$(profile_item 3c4d)._ornament")" = "$checked_mark"
+    test "$(shell_eval "$(profile_item 1a2b)._ornament + '|' + $(profile_item 3c4d)._ornament")" = "0|2"
 check "the Account submenu stayed open through the switch" \
     test "$(shell_eval "$HL_EXT._accountMenu.menu.isOpen")" = true
 menu_close
