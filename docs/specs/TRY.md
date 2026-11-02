@@ -351,6 +351,8 @@ The error text depends on the failure, checked in this order:
 - Tailtray stores no credential and reads no file of Tailscale. It knows only what the CLI prints.
 - Commands run with an argument array and no shell. No device name, address, or URL goes through
   a shell.
+- Tailtray never elevates privileges: it runs no `sudo` and no `pkexec`. A command that needs
+  them, such as making the user the operator, is shown for the user to copy and run.
 - Only `https://` URLs are opened.
 - Tailtray writes only its own settings.
 
