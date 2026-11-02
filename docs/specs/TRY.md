@@ -91,7 +91,7 @@ The menu shows these sections, top to bottom. A section that a state does not li
 | Error block | when set | when set | when set | when set | yes |
 | Warnings | when any | when any | when any | when any | no |
 | This device | yes | no | no | no | no |
-| Account | yes | yes | yes | yes | no |
+| Account | yes | yes | yes | no | no |
 | Exit node | yes | no | no | no | no |
 | Settings | yes | no | yes | no | no |
 | Other devices | yes | no | no | no | no |
@@ -111,6 +111,9 @@ Settings, and before the footer. Two separators never touch.
 - While either command runs, the switch is insensitive and the label reads `Connecting…` or
   `Disconnecting…`. The next refresh sets the real state.
 - `tailscale up` is never run with flags: with any flag, it would rewrite preferences.
+- `tailscale up` waits for authentication when the node needs a login or an approval, so it can
+  end by its time limit. When the refresh after it shows Login required or Approval required,
+  the action sets no error block, whatever its outcome: the menu shows that state instead.
 
 ### Identity line
 
@@ -120,11 +123,10 @@ Settings, and before the footer. Two separators never touch.
 
 ### Login required and Approval required
 
-- Login required shows, under the header:
-  - when `AuthURL` of the status is an `https://` URL, a **Log in…** row that opens it in the
-    default browser;
-  - otherwise, the line `Log in from a terminal:` and the command `tailscale up` on a row with a
-    copy icon, as in the error block.
+- In these two states Tailtray is blocked: logging in or getting approved happens outside it, and
+  the menu offers nothing else than what follows, plus the warnings and the footer.
+- Login required shows, under the header, the line `Log in from a terminal:` and the command
+  `tailscale up` on a row with a copy icon, as in the error block. `AuthURL` is not used.
 - Tailtray never runs `tailscale login`: it would start a new, empty profile instead of logging
   the current one back in.
 - Approval required shows the line `An admin must approve this device.` and an **Open admin
@@ -192,6 +194,7 @@ Settings, and before the footer. Two separators never touch.
   `tailscale get --json` failed or lacks the value.
 - With no exit node in use and no peer to list, the submenu row is insensitive and reads
   `None available`.
+- The Exit node submenu is at most 280 pixels high, and its rows scroll within it.
 - When the exit node in use goes offline, its row keeps the check mark and shows the `offline`
   badge, and the panel keeps the exit node icon.
 
@@ -274,6 +277,11 @@ Settings, and before the footer. Two separators never touch.
 - Every action runs one `tailscale` command, with an argument array and no shell.
 - One action runs at a time. While it runs, the row that started it is insensitive and shows its
   progress, and every other action row is insensitive too.
+- The progress shown: the header label reads `Connecting…` or `Disconnecting…`; the account row
+  chosen shows `Switching…` on its right; the exit node row chosen, or **None**, shows `Setting…`
+  on its right; a switch row (Settings, **Allow LAN access**) shows the requested value at once.
+- The refresh after the action shows the real state, so a switch whose action failed goes back
+  to its previous value.
 - After the action ends, Tailtray refreshes, whether the action succeeded or failed.
 - Actions keep the menu open.
 
@@ -372,7 +380,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 **Scope**
 - The repository, modeled on cr0cK/greenlight: `src/` (extension, prefs, `metadata.json`, GSettings schema, icons), `tests/`, `package.json` with ESLint, `Makefile` with `make check` (schema, `node --check`, `node --test`, `gnome-extensions pack`), `.github/workflows` (PR checks on Fedora 43, PR title lint, release-please as a GitHub App), pre-commit (ESLint, tests, schema, gitleaks, typos), `release-please-config.json` with `src/metadata.json` `version-name`, README, CONTRIBUTING, AGENTS.md, `CLAUDE.md` (`@AGENTS.md`), LICENSE (MIT), PR template.
 - `scripts/fake-tailscale`: a stand-in CLI that answers `status --json`, `get --json`, `switch --list --json`, `up`, `down`, `set`, `switch`, and `ping` from fixture files in a scratch directory, records the arguments it was called with, and can be told to sleep or fail per command. `scripts/sandbox.sh` and `scripts/screenshots.sh` put it first on `PATH` when asked to.
-- Spec sections: Audience and environment, Reading the state, Connection states, Panel icon, Menu layout, Header, Identity line, Login required and Approval required, Error block, Warnings, This device, Footer, Copying, Actions, Commands and time limits, Errors, Preferences (refresh interval and version), Lifecycle, Security and privacy.
+- Spec sections: Audience and environment, Reading the state, Connection states, Panel icon, Menu layout, Header, Identity line, Login required and Approval required, Error block, Warnings, This device, Footer, Device names, Relative times, Copying, Actions, Commands and time limits, Errors, Preferences (refresh interval and version), Lifecycle, Security and privacy. Device names and Relative times are pure modules that P3 and P4 reuse.
 
 **Temporary restrictions**
 - No Account, Exit node, Settings, or Other devices section: TRY-P2, P3, P4.
@@ -381,7 +389,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - No notifications, no **Notifications** preference, no `notifications` and `notified-key-expiries` keys: TRY-P5.
 
 **Prototype** (first, on a real `tailscaled` with the user as operator, then throwaway)
-1. From `Stopped`, `tailscale up` with no argument exits 0 and leaves `tailscale get --json` unchanged. Pass: exit 0 and the JSON before and after is equal; the time to `Running` is reported, not judged. Fail: a `blocked` stamp on the tracking issue, since the header switch has no other safe command.
+1. Precondition: set non-default preferences first, then record them (`tailscale set --accept-routes=true --shields-up=true --exit-node-allow-lan-access=true`, and an exit node when the tailnet has one). From `Stopped`, `tailscale up` with no argument exits 0 and leaves `tailscale get --json` unchanged. Pass: exit 0 and the JSON before and after is equal; the time to `Running` is reported, not judged. Fail: a `blocked` stamp on the tracking issue, since the header switch has no other safe command. Restore the user's preferences afterwards.
 2. `tailscale down` exits 0, reaches `Stopped`, with the same preference check.
 3. On GNOME Shell 49, `Main.osdWindowManager.showOne(monitor, icon, label)` with `edit-copy-symbolic` shows on the current monitor (it shows nothing without an icon). Fail: outbox entry with the replacement.
 
@@ -392,7 +400,8 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Driving the switch calls the fake with exactly `up` then `down`; activating an address copies it (read back from `St.Clipboard`) and closes the menu.
 - Disabling the extension while a fake command sleeps kills it (no `tailscale` child left), and leaves no timer (checked by re-enabling and counting refreshes); a fake reply delayed past a disable and re-enable changes nothing in the new instance.
 - With the fake: three refresh requests during a slow refresh run exactly one more refresh; a new refresh interval applies from the next scheduled refresh; a refresh started before an action ended is discarded (slow status, fast `down`); a refresh that flips the switch calls no command; a failing `status` shows Unavailable; a sleeping read is killed at 30 s (time limit lowered by an environment variable for the test).
-- Login required with and without `AuthURL`: the **Log in…** row or the copyable `tailscale up` command; `tailscale login` is never called.
+- Login required shows only the copyable `tailscale up` command, the warnings, and the footer, with or without `AuthURL`; Approval required shows its line and **Open admin console**; `tailscale login` is never called.
+- A fake `up` that sleeps past its time limit while `status` answers `NeedsLogin` leaves no error block, and the menu shows Login required.
 - A refresh interval chosen in the preferences window is still set after restarting the headless shell, and the refresh timer follows it.
 
 **Technical notes**
@@ -404,6 +413,8 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - **JSON fields used** (tailscale 1.104): `BackendState`, `AuthURL`, `Health`, `CurrentTailnet.Name`, `Self` (`DNSName`, `TailscaleIPs`, `UserID`, `KeyExpiry`), `User[<id>].LoginName`, `Peer[*]` (`DNSName`, `HostName`, `OS`, `Online`, `LastSeen`, `TailscaleIPs`, `ExitNode`, `ExitNodeOption`, `Location`). `get --json` keys: `accept-routes`, `accept-dns`, `shields-up`, `exit-node-allow-lan-access`. `switch --list --json`: `[{id, nickname, tailnet, account, selected}]`. Missing fields are normal; treat every one as optional.
 - **Zero times**: Go's zero time prints as `0001-01-01T00:00:00Z`; treat it as missing.
 - **Menu**: keep persistent sections and update rows in place, as greenlight does (`_buildMenu()` once, sections rebuilt), so open submenus and ping results survive refreshes. GNOME Shell cannot nest a `PopupSubMenuMenuItem` inside another submenu, which is why devices expand inside a scroll view in the main menu, not inside a submenu.
+- **Switch rows**: in GNOME Shell 49, `PopupSwitchMenuItem.setToggleState()` sets the switch's `state`, whose `notify::state` emits `toggled` (`js/ui/popupMenu.js`), so a rendering update looks like a user's toggle. Wrap every update from a refresh in a rendering flag, and have the `toggled` handler return while it is set. `PopupSwitchMenuItem.activate()` toggles and then calls `PopupBaseMenuItem.activate()`, which closes the menu: override `activate` to toggle without calling the parent. The header switch needs both in this plan; the Settings and **Allow LAN access** switches reuse them.
+- **Icons**: the glyph is a symbolic SVG drawn for this project (`src/tailtray-symbolic.svg`), outlined and filled variants included; symbolic icons are recolored by the theme, so the yellow and red dots are a small `St.Widget` drawn over the panel button's corner, not part of the SVG, and the dimmed states use `opacity`.
 - **Clipboard**: `St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, value)`.
 - **OSD**: `Main.osdWindowManager.showOne(global.display.get_current_monitor(), Gio.ThemedIcon.new('edit-copy-symbolic'), label)` on 49; `OsdWindow.show()` returns early without an icon (`js/ui/osdWindow.js`).
 - **Headless verification**: reuse greenlight's AGENTS.md recipe (headless Wayland shell in `dbus-run-session`, keyfile GSettings, unsafe-mode helper for Eval and Screenshot) with `scripts/fake-tailscale` first on `PATH`, so tests never touch the real tailnet.
@@ -421,13 +432,14 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Unit tests: profile rows from `switch --list --json` (selected, missing account), switch values from `get --json` (missing key makes the switch insensitive).
 - Headless GNOME Shell with the fake: activating another profile calls `switch <id>`; activating the selected one calls nothing; each switch calls `set --<flag>=<true|false>`; the menu stays open; the profile list is requested once per menu opening and once after each switch, not per refresh (call count in the fake's log); after a switch with the menu open, the new profile is checked.
 - Profile list states: `Loading…` while the first answer sleeps, the previous profiles insensitive while a later one sleeps, `Could not list accounts` when it fails.
-- While a slow `switch` runs, every action row is insensitive; no second action command reaches the fake.
+- While a slow `switch` runs, every action row is insensitive and the chosen profile shows `Switching…`; no second action command reaches the fake.
+- A switch row shows the requested value while its `set` runs, and its previous value after a failing `set`.
 - A failing `get` keeps the state Connected, makes the three switches insensitive, and shows no error block.
 - Screenshots of both submenus expanded.
 
 **Technical notes**
 - See TRY-P1 for the subprocess, menu, and headless notes.
-- **Switch rows that stay open**: `PopupSwitchMenuItem.activate()` toggles, then calls `PopupBaseMenuItem.activate()`, which closes the menu (`js/ui/popupMenu.js`). Override `activate` so it toggles without calling the parent, and set rendered state with `setToggleState`, which does not emit `toggled`, so a refresh never runs a command.
+- **Switch rows**: reuse TRY-P1's rendering flag and `activate` override, so a refresh never runs a command and toggling keeps the menu open.
 
 ### TRY-P3: Exit node
 
@@ -440,6 +452,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 **Acceptance**
 - Unit tests: exit node list (sorting, offline insensitive except the one in use, the node in use listed and checked even without `ExitNodeOption`, IPv6 fallback, no address insensitive, `None` checked with no exit node, `None available` only with no option and none in use).
 - Headless with the fake: choosing a node calls `set --exit-node=<IPv4>`, **None** calls `set --exit-node=`, the checked row calls nothing, **Allow LAN access** calls `set --exit-node-allow-lan-access=<bool>`; the icon shows the badge while an exit node is in use, offline or not.
+- The chosen row shows `Setting…` while a slow `set` runs; 300 fake exit nodes scroll within the 280 px submenu, and a refresh updates their rows in place (rows kept by peer `ID`, expanded submenu kept open).
 - Screenshots: submenu expanded with an online, an offline, and a checked offline node; the panel icon with the badge.
 
 **Technical notes**
@@ -447,7 +460,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 
 ### TRY-P4: Other devices
 
-**Scope**: spec sections Other devices, Device names, and Relative times as applied to offline devices.
+**Scope**: spec section Other devices, using the Device names and Relative times modules of TRY-P1.
 
 **Temporary restrictions**
 - No notifications: TRY-P5.
@@ -467,8 +480,8 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 
 **Acceptance**
 - Unit tests: a pure transition function over (previous good state, current state, last Tailtray action time, notified expiry pairs) for each notification, the baseline on the first successful refresh after failed ones, a failed refresh between two good ones, the 30-second action window, exit node A online to exit node B offline (no notification), and the pair list capped at 10.
-- Headless with the fake: each notification appears once in the message tray for its transition; none with the preference off; a key expiry notification is not repeated after restarting the shell, nor after switching accounts back and forth; the Login required notification is withdrawn once the state leaves it; activating any notification opens the menu (checked through Eval); the **Notifications** preference is still set after restarting the shell.
+- Headless with the fake: each notification appears once in the message tray for its transition; none with the preference off; a key expiry notification is not repeated after restarting the shell, nor after switching accounts back and forth; the Login required notification is withdrawn once the state leaves it; activating any notification opens the menu (checked through Eval); the **Notifications** preference is still set after restarting the shell; after a notification is dismissed or activated, the next transition still notifies; withdrawing an already dismissed Login required notification logs no error.
 
 **Technical notes**
 - See TRY-P1 for the subprocess, menu, and headless notes.
-- **Notifications**: GNOME 49 `MessageTray.Source` and `MessageTray.Notification` with `Main.messageTray.add(source)`; check the 49 constructor signatures (they take an object of properties since 46).
+- **Notifications**: GNOME 49 `MessageTray.Source` and `MessageTray.Notification` with `Main.messageTray.add(source)`; check the 49 constructor signatures (they take an object of properties since 46). A source destroys itself when its last notification goes (`Source._onNotificationDestroy` in `js/ui/messageTray.js`), and activating a non-resident notification destroys it: create the source when a notification is first needed, drop it on its `destroy` signal, and clear the reference to the Login required notification on its `destroy`, so withdrawing it never touches a destroyed object.
