@@ -310,7 +310,7 @@ The error text depends on the failure, checked in this order:
 - **Connection lost**: the previous refresh was Connected and this one is not, and no action of
   Tailtray started in the last 30 seconds. The body is the new header label.
 - **Login required**: the state becomes Login required or Approval required, from any other
-  state. Activating the notification opens the menu. The notification is withdrawn once the
+  state. The body is the new header label. Activating the notification opens the menu. The notification is withdrawn once the
   state leaves Login required and Approval required.
 - **Exit node offline**: the same peer, by its `ID`, was the exit node in use and online at the
   previous refresh, and is the exit node in use and offline now. The body names it.
@@ -391,8 +391,9 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - In a headless GNOME Shell 49 with `scripts/fake-tailscale`, screenshots of the menu in Connected, Disconnected, Connecting, Login required, Approval required, and Unavailable (CLI missing, service down, access denied), and of the panel icon in each; no `JS ERROR` or `JS WARNING` in the shell log.
 - Driving the switch calls the fake with exactly `up` then `down`; activating an address copies it (read back from `St.Clipboard`) and closes the menu.
 - Disabling the extension while a fake command sleeps kills it (no `tailscale` child left), and leaves no timer (checked by re-enabling and counting refreshes); a fake reply delayed past a disable and re-enable changes nothing in the new instance.
-- With the fake: three refresh requests during a slow refresh run exactly one more refresh; a new refresh interval applies from the next scheduled refresh; a refresh started before an action ended is discarded (slow status, fast `down`); a refresh that flips the switch calls no command; a failing `status` shows Unavailable while a failing `get` does not; a sleeping read is killed at 30 s (time limit lowered by an environment variable for the test).
+- With the fake: three refresh requests during a slow refresh run exactly one more refresh; a new refresh interval applies from the next scheduled refresh; a refresh started before an action ended is discarded (slow status, fast `down`); a refresh that flips the switch calls no command; a failing `status` shows Unavailable; a sleeping read is killed at 30 s (time limit lowered by an environment variable for the test).
 - Login required with and without `AuthURL`: the **Log in…** row or the copyable `tailscale up` command; `tailscale login` is never called.
+- A refresh interval chosen in the preferences window is still set after restarting the headless shell, and the refresh timer follows it.
 
 **Technical notes**
 - The repository, the toolchain, and CI are new in this plan: the checks of the project settings (`npm run lint`, `make check`, headless GNOME Shell) apply from its own PR on, and the plan keeps `docs/specs/README.md` in step if a command changes.
@@ -421,6 +422,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Headless GNOME Shell with the fake: activating another profile calls `switch <id>`; activating the selected one calls nothing; each switch calls `set --<flag>=<true|false>`; the menu stays open; the profile list is requested once per menu opening and once after each switch, not per refresh (call count in the fake's log); after a switch with the menu open, the new profile is checked.
 - Profile list states: `Loading…` while the first answer sleeps, the previous profiles insensitive while a later one sleeps, `Could not list accounts` when it fails.
 - While a slow `switch` runs, every action row is insensitive; no second action command reaches the fake.
+- A failing `get` keeps the state Connected, makes the three switches insensitive, and shows no error block.
 - Screenshots of both submenus expanded.
 
 **Technical notes**
@@ -441,7 +443,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - Screenshots: submenu expanded with an online, an offline, and a checked offline node; the panel icon with the badge.
 
 **Technical notes**
-- See TRY-P1 for the subprocess, menu, and headless notes. The exit node badge is a second symbolic icon next to the glyph's, swapped on refresh.
+- See TRY-P1 for the subprocess, menu, and headless notes. The badged glyph is its own symbolic SVG (`src/tailtray-exit-symbolic.svg`, glyph and arrow in one image), set as the panel icon's `gicon` on refresh; the panel shows one icon in every state.
 
 ### TRY-P4: Other devices
 
@@ -465,7 +467,7 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 
 **Acceptance**
 - Unit tests: a pure transition function over (previous good state, current state, last Tailtray action time, notified expiry pairs) for each notification, the baseline on the first successful refresh after failed ones, a failed refresh between two good ones, the 30-second action window, exit node A online to exit node B offline (no notification), and the pair list capped at 10.
-- Headless with the fake: each notification appears once in the message tray for its transition; none with the preference off; a key expiry notification is not repeated after restarting the shell, nor after switching accounts back and forth; the Login required notification is withdrawn once the state leaves it.
+- Headless with the fake: each notification appears once in the message tray for its transition; none with the preference off; a key expiry notification is not repeated after restarting the shell, nor after switching accounts back and forth; the Login required notification is withdrawn once the state leaves it; activating any notification opens the menu (checked through Eval); the **Notifications** preference is still set after restarting the shell.
 
 **Technical notes**
 - See TRY-P1 for the subprocess, menu, and headless notes.
