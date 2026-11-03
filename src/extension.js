@@ -198,13 +198,15 @@ export default class TailtrayExtension extends Extension {
             St.Settings.get().disconnect(this._schemeId);
         this._schemeId = 0;
         this._engine?.destroy();
+        // Closing the menu while it is destroyed must not render: the menu handler returns
+        // without an engine.
+        this._engine = null;
         this._pinger?.destroy();
         this._runner?.destroy();
         // The list is in the menu's actors but not among its items: destroy it by hand.
         this._devicesList?.destroy();
         this._indicator?.destroy();
 
-        this._engine = null;
         this._pinger = null;
         this._runner = null;
         this._settings = null;

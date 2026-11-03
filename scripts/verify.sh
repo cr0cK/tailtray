@@ -1045,6 +1045,8 @@ check "a slow ping runs" test "$(pids_of_fake)" -ge 1
 shell_eval "Main.extensionManager.disableExtension('$HL_UUID'); 'ok'" >/dev/null
 sleep 1
 check "disabling killed it" test "$(pids_of_fake)" = 0
+check "disabling with the menu open touched no destroyed actor" \
+    test "$(grep -c 'disposed' "$WORK/shell.log")" = 0
 shell_eval "Main.extensionManager.enableExtension('$HL_UUID'); 'ok'" >/dev/null
 wait_for "Main.extensionManager.lookup('$HL_UUID')?.state === 1"
 wait_model "m.loaded"
