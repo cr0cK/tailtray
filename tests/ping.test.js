@@ -78,10 +78,9 @@ function harness() {
             run.result = new Promise(resolve => {
                 run.finish = value => resolve(value);
             });
+            // A killed command still ends later; the test decides when.
             run.kill = () => {
                 run.killed = true;
-                // A killed command still ends, with no output.
-                run.finish({missing: false, timedOut: false, exitCode: -1, stdout: '', stderr: ''});
             };
             runs.push(run);
             return run;
@@ -144,13 +143,27 @@ test('reset kills the pings that run and clears every result, and a killed ping 
     assert.deepEqual(runs.map(run => run.killed), [true, false]);
     assert.equal(pinger.text('a'), '');
     assert.equal(pinger.text('b'), '');
+    // The killed command ends after the reset: its reply shows nothing and announces nothing.
+    runs[0].finish({missing: false, timedOut: false, exitCode: -1, stdout: '', stderr: ''});
+    await tick();
+    assert.equal(pinger.text('a'), '');
     assert.equal(changes.length, 0);
-    // The device can be pinged again, and the old reply cannot land on the new ping.
+});
+
+test('a reply of a killed ping cannot land on the ping that replaced it', async () => {
+    const {pinger, runs, changes} = harness();
     pinger.ping('a', '100.64.0.2');
-    assert.equal(pinger.text('a'), '…');
+    pinger.reset();
+    pinger.ping('a', '100.64.0.2');
+    assert.equal(runs.length, 2);
+    const before = changes.length;
     runs[0].finish(result('direct'));
     await tick();
     assert.equal(pinger.text('a'), '…');
+    assert.equal(changes.length, before);
+    runs[1].finish(result('derp'));
+    await tick();
+    assert.equal(pinger.text('a'), 'relay nyc · 26 ms');
 });
 
 test('forget drops one device only', async () => {
@@ -169,8 +182,9 @@ test('after destroy nothing starts and no reply is shown or announced', async ()
     const {pinger, runs, changes} = harness();
     pinger.ping('a', '100.64.0.2');
     pinger.destroy();
-    await tick();
     assert.equal(runs[0].killed, true);
+    runs[0].finish(result('direct'));
+    await tick();
     changes.length = 0;
     assert.equal(pinger.ping('b', '100.64.0.3'), false);
     assert.equal(runs.length, 1);

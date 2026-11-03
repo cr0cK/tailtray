@@ -200,6 +200,8 @@ export default class TailtrayExtension extends Extension {
         this._engine?.destroy();
         this._pinger?.destroy();
         this._runner?.destroy();
+        // The list is in the menu's actors but not among its items: destroy it by hand.
+        this._devicesList?.destroy();
         this._indicator?.destroy();
 
         this._engine = null;

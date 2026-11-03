@@ -151,7 +151,7 @@ test('deviceList gives the copyable rows and whether the device can be pinged', 
 });
 
 test('deviceList identifies a device by its ID, else its key, and survives odd peers', () => {
-    const status = {Peer: {'nodekey:k1': {DNSName: 'a.ts.net.', Online: true}, 'nodekey:k2': null, 'nodekey:k3': 7}};
+    const status = {Peer: {'nodekey:k1': {DNSName: 'a.tail1234.ts.net.', Online: true}, 'nodekey:k2': null, 'nodekey:k3': 7}};
     assert.deepEqual(deviceList(status, NOW).devices.map(device => device.id), ['nodekey:k1']);
     assert.deepEqual(peersOf({Peer: [1]}), []);
     assert.equal(peerId('nodekey:k', {ID: ''}), 'nodekey:k');
