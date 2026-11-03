@@ -3,7 +3,8 @@
   "name": "Tailtray",
   "description": "Show and control the local Tailscale node from the top bar: connection state, this device, and a switch to connect or disconnect.",
   "shell-version": [
-    "49"
+    "49",
+    "50"
   ],
   "url": "https://github.com/cr0cK/tailtray",
   "settings-schema": "org.gnome.shell.extensions.tailtray",

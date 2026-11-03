@@ -46,7 +46,7 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
 
 ## Requirements
 
-- GNOME Shell 49 on Linux.
+- GNOME Shell 49 or 50 on Linux.
 - `tailscale` and `tailscaled`, version 1.104 or later.
 - To connect and disconnect from the menu, your user must be the Tailscale operator. Run once:
 

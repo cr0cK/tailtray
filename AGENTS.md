@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for AI agents working on Tailtray, a GNOME Shell 49 extension that shows and controls
+Guidance for AI agents working on Tailtray, a GNOME Shell 49 and 50 extension that shows and controls
 the local Tailscale node through the `tailscale` CLI. Read CONTRIBUTING.md for the human
 workflow and `docs/specs/TRY.md` for the product contract; this file holds what the code does not
 tell you.
