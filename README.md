@@ -56,15 +56,25 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
 
 ## Install
 
-Download `tailtray@cr0ck.github.io.shell-extension.zip` from the
-[latest release](https://github.com/cr0cK/tailtray/releases/latest), then:
+Download the zip of the [latest release](https://github.com/cr0cK/tailtray/releases/latest) and
+install it:
 
 ~~~sh
-gnome-extensions install --force tailtray@cr0ck.github.io.shell-extension.zip
-gnome-extensions enable tailtray@cr0ck.github.io
+curl -fsSLo /tmp/tailtray.zip https://github.com/cr0cK/tailtray/releases/latest/download/tailtray@cr0ck.github.io.shell-extension.zip
+gnome-extensions install --force /tmp/tailtray.zip
 ~~~
 
-Log out and back in if GNOME Shell does not list the extension yet.
+The same commands update an existing install. For a specific version, replace `latest/download`
+with `download/vX.Y.Z`.
+
+To install from a checkout instead, run `make install` from the repository root.
+
+GNOME Shell must reload its extension list before you enable a newly installed extension: log out
+and back in. Then enable Tailtray:
+
+~~~sh
+gnome-extensions enable tailtray@cr0ck.github.io
+~~~
 
 ## Development
 
