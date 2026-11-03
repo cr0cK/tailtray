@@ -1,6 +1,6 @@
 ---
 code: TRY
-status: active
+status: shipped
 version: v0.1
 tracking: "#1"
 ---
