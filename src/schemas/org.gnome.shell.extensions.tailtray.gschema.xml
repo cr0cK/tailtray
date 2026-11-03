@@ -7,5 +7,15 @@
       <description>Time between two reads of the Tailscale state, in seconds, counted from the end of the previous read.</description>
       <range min="5" max="60"/>
     </key>
+    <key name="notifications" type="b">
+      <default>true</default>
+      <summary>Notifications</summary>
+      <description>Whether Tailtray sends desktop notifications for connection changes and an expiring key.</description>
+    </key>
+    <key name="notified-key-expiries" type="as">
+      <default>[]</default>
+      <summary>Notified key expiries</summary>
+      <description>The last 10 key expiries Tailtray notified, each as "&lt;device ID&gt; &lt;expiry time&gt;".</description>
+    </key>
   </schema>
 </schemalist>

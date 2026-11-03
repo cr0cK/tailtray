@@ -40,10 +40,9 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
 - The other devices of the tailnet, online first, in a scrolling list. Each one expands to its name
   and addresses, each one click away from your clipboard, and a **Ping** that shows whether the
   device answers directly, through a relay, or not at all.
-- A preferences window with the refresh interval.
-
-Notifications are coming in the next release; see
-[`docs/specs/TRY.md`](docs/specs/TRY.md).
+- Notifications when the connection is lost, a login is required, the exit node in use goes
+  offline, or this device's key is about to expire.
+- A preferences window with the refresh interval and a switch for the notifications.
 
 ## Requirements
 

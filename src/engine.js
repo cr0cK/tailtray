@@ -16,7 +16,10 @@ function succeeded(result) {
  *
  * deps: run(args, timeoutSeconds) -> Promise<{missing, timedOut, exitCode, stdout, stderr}>;
  * setTimer(milliseconds, callback) -> handle; clearTimer(handle); now() -> milliseconds;
- * intervalSeconds() -> number; userName; onChange(model).
+ * intervalSeconds() -> number; userName; onChange(model); and optionally
+ * onGoodRefresh({state, status, nowMs, lastActionMs}), called for every successful refresh that
+ * counts (never for a failed or a discarded one), where `lastActionMs` is when the last action
+ * started, or null.
  *
  * An engine lives for one enable. destroy() makes every pending completion a no-op, so a reply
  * that arrives after a disable, even after a re-enable, touches nothing.
@@ -32,6 +35,7 @@ export class Engine {
         // started before any of those no longer matches and is discarded.
         this._generation = 0;
         this._pending = null;
+        this._lastActionMs = null;
         this._timer = null;
         this._menuOpen = false;
         // Whether the Account section is shown in an open menu, and the request that counts.
@@ -109,6 +113,7 @@ export class Engine {
         if (this._destroyed || this._pending)
             return false;
         this._generation++;
+        this._lastActionMs = this._deps.now();
         this._pending = {kind, error: null, errorDropped: false};
         this._model.actionError = null;
         this._model.pending = {kind, ...detail};
@@ -195,6 +200,14 @@ export class Engine {
         // that does.
         this._syncAccounts(switched);
         this._emit();
+        if (read.ok) {
+            this._deps.onGoodRefresh?.({
+                state: read.state,
+                status: read.status,
+                nowMs: model.updatedAt,
+                lastActionMs: this._lastActionMs,
+            });
+        }
     }
 
     // Lists the profiles when the Account section appears in an open menu, and after a switch
