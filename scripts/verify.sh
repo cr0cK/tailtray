@@ -1143,6 +1143,15 @@ banner_shot() {
     sleep 1
     screenshot "$SHOTS/$1.png"
 }
+# Asks for a refresh and waits until it has been applied, so a check made after it cannot beat a
+# notification it would send.
+refresh_applied() {
+    local previous
+    previous=$(model updatedAt)
+    refresh_now
+    wait_model "m.updatedAt !== $previous"
+    sleep 0.3
+}
 # Sets the Self ID and key expiry (in days from now) of the fake's status.
 fake_key() {
     edit_status "import datetime
@@ -1162,8 +1171,7 @@ check "the first refresh sends no notification" test "$(tray_count)" = 0
 show stopped disconnected
 check "Connection lost, with the new header label" test "$(tray)" = "Connection lost: Disconnected"
 banner_shot notification-connection-lost
-refresh_now
-wait_model "m.state.id === 'disconnected'"
+refresh_applied
 check "a refresh in the same state sends nothing more" test "$(tray_count)" = 1
 fake_set status.fail 1
 fake_set status.stderr "failed to connect to local tailscaled; it doesn't appear to be running"
@@ -1194,6 +1202,25 @@ show stopped disconnected
 check "after a dismissal the next transition still notifies" \
     test "$(tray)" = "Connection lost: Login required|Connection lost: Disconnected"
 check "no JS ERROR or JS WARNING so far" assert_log_clean
+
+NOTIFICATIONS=true begin "Notifications: a failed refresh between two good ones is not compared"
+fake_set status.fail 1
+fake_set status.stderr "failed to connect to local tailscaled; it doesn't appear to be running"
+refresh_now
+wait_model "m.state.id === 'unavailable'"
+check "an Unavailable refresh sends nothing" test "$(tray_count)" = 0
+fake_unset status.fail
+fake_unset status.stderr
+show stopped disconnected
+check "the loss is seen against the last good refresh, Connected" test "$(tray)" = "Connection lost: Disconnected"
+shell_eval "Main.messageTray.getSources().forEach(source => source.destroy()); 'ok'" >/dev/null
+show running connected
+fake_set status.fail 1
+refresh_now
+wait_model "m.state.id === 'unavailable'"
+fake_unset status.fail
+show running connected
+check "Connected, failed, Connected sends nothing" test "$(tray_count)" = 0
 
 NOTIFICATIONS=true begin "Notifications: activating opens the menu, and the next transition still notifies"
 show stopped disconnected
@@ -1235,8 +1262,7 @@ edit_status "d['Peer']['nodekey:eeee']['Online'] = False"
 refresh_now
 wait_model "m.status.Peer['nodekey:eeee'].Online === false"
 check "Exit node offline names the node" test "$(tray)" = "Exit node offline: oslo-vps is offline."
-refresh_now
-wait_model "m.status.Peer['nodekey:eeee'].Online === false"
+refresh_applied
 check "it is not repeated" test "$(tray_count)" = 1
 edit_status "d['Peer']['nodekey:eeee']['Online'] = True"
 refresh_now
@@ -1254,8 +1280,7 @@ NOTIFICATIONS=true begin "Notifications: a key expiring is notified once"
 fake_key nSELF000000000 3
 check "Key expiring uses the warning text" test "$(tray)" = "Key expiring: This device's key expires in 3 days."
 banner_shot notification-key-expiring
-refresh_now
-wait_model "m.loaded"
+refresh_applied
 check "not repeated by the next refresh" test "$(tray_count)" = 1
 check "the pair is stored" test "$(gsettings get "$HL_SCHEMA" notified-key-expiries | grep -c nSELF000000000)" = 1
 shell_eval "Main.messageTray.getSources().forEach(source => source.destroy()); 'ok'" >/dev/null
