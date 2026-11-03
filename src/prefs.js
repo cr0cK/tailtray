@@ -1,4 +1,5 @@
 import Adw from 'gi://Adw';
+import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
@@ -23,8 +24,15 @@ export default class TailtrayPreferences extends ExtensionPreferences {
                 settings.set_uint('refresh-interval', INTERVALS[interval.selected]);
         });
 
+        const notifications = new Adw.SwitchRow({
+            title: 'Notifications',
+            subtitle: 'Tell me when the connection is lost, a login is needed, an exit node goes offline, or the key is about to expire.',
+        });
+        settings.bind('notifications', notifications, 'active', Gio.SettingsBindFlags.DEFAULT);
+
         const general = new Adw.PreferencesGroup({title: 'General'});
         general.add(interval);
+        general.add(notifications);
 
         const version = new Adw.ActionRow({
             title: 'Version',

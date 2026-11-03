@@ -15,6 +15,7 @@ import {deviceList, deviceRows} from './devices.js';
 import {Engine} from './engine.js';
 import {ADMIN_CONSOLE_URL} from './errors.js';
 import {exitNodeArguments, exitNodeInUse, exitNodeRows} from './exitnodes.js';
+import {Notifier} from './notifier.js';
 import {Pinger} from './ping.js';
 import {CommandRunner} from './runner.js';
 import {LAN_ACCESS, setArguments, settingRows, SETTINGS, switchRow} from './settings.js';
@@ -167,6 +168,11 @@ export default class TailtrayExtension extends Extension {
             start: (args, timeoutSeconds) => this._runner.start(args, timeoutSeconds),
             onChange: () => this._render(this._engine.model),
         });
+        this._notifier = new Notifier({
+            settings: this._settings,
+            icon: Gio.FileIcon.new(Gio.File.new_for_path(`${this.path}/tailtray-symbolic.svg`)),
+            openMenu: () => this._indicator?.menu.open(),
+        });
         this._engine = new Engine({
             run: (args, timeoutSeconds) => this._runner.run(args, timeoutSeconds),
             setTimer: (milliseconds, callback) => GLib.timeout_add(
@@ -179,6 +185,14 @@ export default class TailtrayExtension extends Extension {
             intervalSeconds: () => this._settings.get_uint('refresh-interval'),
             userName: GLib.get_user_name(),
             onChange: model => this._render(model),
+            onGoodRefresh: refresh => {
+                // A notification failing must not stop the refresh loop.
+                try {
+                    this._notifier?.refreshed(refresh);
+                } catch (error) {
+                    console.error(`Tailtray: notification failed: ${error}`);
+                }
+            },
         });
 
         this._buildIndicator();
@@ -201,6 +215,8 @@ export default class TailtrayExtension extends Extension {
         // Closing the menu while it is destroyed must not render: the menu handler returns
         // without an engine.
         this._engine = null;
+        this._notifier?.destroy();
+        this._notifier = null;
         this._pinger?.destroy();
         this._runner?.destroy();
         // The list is in the menu's actors but not among its items: destroy it by hand.

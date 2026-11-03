@@ -14,13 +14,16 @@ headless_boot
 PATH_WITH_FAKE=$PATH
 MODEL="$HL_EXT._engine.model"
 
-# A fresh scenario: fixtures reset, a long refresh interval, no time limit override, a new
-# extension instance, and its first refresh answered.
+# A fresh scenario: fixtures reset, a long refresh interval, notifications off (unless
+# NOTIFICATIONS=true) with none remembered, no time limit override, a new extension instance, and
+# its first refresh answered.
 begin() {
     echo
     echo "== $1"
     fake_reset
     set_interval "${2:-60}"
+    gsettings set "$HL_SCHEMA" notifications "${NOTIFICATIONS:-false}"
+    gsettings reset "$HL_SCHEMA" notified-key-expiries
     shell_eval "GLib.setenv('PATH', '$PATH_WITH_FAKE', true);
         GLib.unsetenv('TAILTRAY_TIMEOUT_SECONDS'); 'ok'" >/dev/null
     ext_reload
@@ -1120,6 +1123,188 @@ wait_model "m.state.id === 'unavailable'" 10
 check "the killed read shows Unavailable" test "$(model refreshError.text)" = "The command timed out."
 check "no tailscale child left" test "$(pids_of_fake)" = 0
 
+# --- Notifications ----------------------------------------------------------------------------
+# The notifications in the message tray, as "title: body" joined by |, oldest first.
+tray() {
+    shell_eval "Main.messageTray.getSources().flatMap(source => source.notifications
+        .map(n => n.title + ': ' + n.body)).join('|')"
+}
+tray_count() {
+    shell_eval "Main.messageTray.getSources().reduce((sum, source) => sum + source.notifications.length, 0)"
+}
+# Runs JavaScript on the first notification of the tray whose title is $1: `n` is that notification.
+on_notification() {
+    shell_eval "(n => { $2 })(Main.messageTray.getSources().flatMap(s => s.notifications)
+        .find(n => n.title === '$1'))"
+}
+# The banner stays a few seconds: wait for it to be fully shown, then capture the screen.
+banner_shot() {
+    wait_for "!!Main.messageTray._banner && Main.messageTray._banner.mapped"
+    sleep 1
+    screenshot "$SHOTS/$1.png"
+}
+# Sets the Self ID and key expiry (in days from now) of the fake's status.
+fake_key() {
+    edit_status "import datetime
+d['Self']['ID'] = '$1'
+d['Self']['KeyExpiry'] = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=$2, hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')"
+    local expiry
+    expiry=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["Self"]["KeyExpiry"])' \
+        "$TAILTRAY_FAKE_DIR/status.json")
+    refresh_now
+    wait_model "m.status.Self.ID === '$1' && m.status.Self.KeyExpiry === '$expiry'"
+}
+
+NOTIFICATIONS=true begin "Notifications: the baseline sends nothing, each transition notifies once"
+check "the Notifications preference is on by default" \
+    test "$(gsettings reset "$HL_SCHEMA" notifications; gsettings get "$HL_SCHEMA" notifications)" = true
+check "the first refresh sends no notification" test "$(tray_count)" = 0
+show stopped disconnected
+check "Connection lost, with the new header label" test "$(tray)" = "Connection lost: Disconnected"
+banner_shot notification-connection-lost
+refresh_now
+wait_model "m.state.id === 'disconnected'"
+check "a refresh in the same state sends nothing more" test "$(tray_count)" = 1
+fake_set status.fail 1
+fake_set status.stderr "failed to connect to local tailscaled; it doesn't appear to be running"
+refresh_now
+wait_model "m.state.id === 'unavailable'"
+fake_unset status.fail
+fake_unset status.stderr
+show stopped disconnected
+check "a failed refresh in between is not a transition" test "$(tray_count)" = 1
+show needs-login login
+check "Login required notifies, with the header label" \
+    test "$(tray)" = "Connection lost: Disconnected|Login required: Login required"
+show needs-approval approval
+check "Login required to Approval required sends nothing more" test "$(tray_count)" = 2
+show running connected
+check "Login required is withdrawn once the state leaves it, the other stays" \
+    test "$(tray)" = "Connection lost: Disconnected"
+shell_eval "Main.messageTray.getSources().forEach(source => source.destroy()); 'ok'" >/dev/null
+check "dismissing everything empties the tray" test "$(tray_count)" = 0
+show needs-login login
+check "Login required notifies again after the tray was emptied" \
+    test "$(tray)" = "Connection lost: Login required|Login required: Login required"
+on_notification "Login required" "n.destroy(); return 'ok'" >/dev/null
+show running connected
+check "withdrawing a Login required notification already dismissed is silent" \
+    test "$(tray)" = "Connection lost: Login required"
+show stopped disconnected
+check "after a dismissal the next transition still notifies" \
+    test "$(tray)" = "Connection lost: Login required|Connection lost: Disconnected"
+check "no JS ERROR or JS WARNING so far" assert_log_clean
+
+NOTIFICATIONS=true begin "Notifications: activating opens the menu, and the next transition still notifies"
+show stopped disconnected
+check "the notification exists" test "$(tray)" = "Connection lost: Disconnected"
+check "the menu is closed" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = false
+on_notification "Connection lost" "n.activate(); return 'ok'" >/dev/null
+wait_for "$HL_EXT._indicator.menu.isOpen"
+check "activating Connection lost opens the menu" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
+check "an activated notification is gone" test "$(tray_count)" = 0
+menu_close
+show needs-login login
+check "the next transition notifies" test "$(tray)" = "Login required: Login required"
+on_notification "Login required" "n.activate(); return 'ok'" >/dev/null
+wait_for "$HL_EXT._indicator.menu.isOpen"
+check "activating Login required opens the menu" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
+menu_close
+show running connected
+show stopped disconnected
+check "and the one after" test "$(tray)" = "Connection lost: Disconnected"
+
+NOTIFICATIONS=true begin "Notifications: an action of Tailtray explains the lost connection"
+shell_eval "$HL_EXT._engine.runAction('down', ['down']); 'ok'" >/dev/null
+wait_model "m.state.id === 'disconnected' && m.pending === null"
+check "disconnecting from the menu sends no Connection lost" test "$(tray_count)" = 0
+show running connected
+fake_state stopped
+shell_eval "$HL_EXT._engine._lastActionMs = Date.now() - 31000; 'ok'" >/dev/null
+refresh_now
+wait_model "m.state.id === 'disconnected'"
+check "the same loss 31 seconds after an action does notify" test "$(tray)" = "Connection lost: Disconnected"
+
+NOTIFICATIONS=true begin "Notifications: an exit node going offline"
+fake_state exit-node
+edit_status "d['Peer']['nodekey:eeee']['Online'] = True"
+refresh_now
+wait_model "m.status.Peer['nodekey:eeee']?.Online === true"
+check "an exit node already in use sends nothing" test "$(tray_count)" = 0
+edit_status "d['Peer']['nodekey:eeee']['Online'] = False"
+refresh_now
+wait_model "m.status.Peer['nodekey:eeee'].Online === false"
+check "Exit node offline names the node" test "$(tray)" = "Exit node offline: oslo-vps is offline."
+refresh_now
+wait_model "m.status.Peer['nodekey:eeee'].Online === false"
+check "it is not repeated" test "$(tray_count)" = 1
+edit_status "d['Peer']['nodekey:eeee']['Online'] = True"
+refresh_now
+wait_model "m.status.Peer['nodekey:eeee'].Online === true"
+shell_eval "Main.messageTray.getSources().forEach(source => source.destroy()); 'ok'" >/dev/null
+edit_status "
+d['Peer']['nodekey:eeee']['ExitNode'] = False
+d['Peer']['nodekey:cccc']['ExitNode'] = True
+d['Peer']['nodekey:cccc']['Online'] = False"
+refresh_now
+wait_model "m.status.Peer['nodekey:cccc'].ExitNode === true"
+check "one exit node replaced by another, the old one offline, sends nothing" test "$(tray_count)" = 0
+
+NOTIFICATIONS=true begin "Notifications: a key expiring is notified once"
+fake_key nSELF000000000 3
+check "Key expiring uses the warning text" test "$(tray)" = "Key expiring: This device's key expires in 3 days."
+banner_shot notification-key-expiring
+refresh_now
+wait_model "m.loaded"
+check "not repeated by the next refresh" test "$(tray_count)" = 1
+check "the pair is stored" test "$(gsettings get "$HL_SCHEMA" notified-key-expiries | grep -c nSELF000000000)" = 1
+shell_eval "Main.messageTray.getSources().forEach(source => source.destroy()); 'ok'" >/dev/null
+shell_restart
+wait_model "m.loaded"
+check "not repeated after restarting the shell" test "$(tray_count)" = 0
+# Switching account: the fake's status carries the other account's key, as the real CLI's would.
+switch_account() {
+    edit_status "d['Self']['ID'] = '$2'
+d['Self']['KeyExpiry'] = '$3'"
+    shell_eval "$HL_EXT._engine.runAction('switch', ['switch', '$1'], {id: '$1'}); 'ok'" >/dev/null
+    wait_model "m.status.Self.ID === '$2' && m.pending === null"
+    sleep 0.5
+}
+account_a_expiry=$(model status.Self.KeyExpiry)
+account_b_expiry=$(date -u -d "+5 days 1 hour" +%Y-%m-%dT%H:%M:%SZ)
+switch_account 3c4d nOTHER0000000 "$account_b_expiry"
+check "another account's key is notified" test "$(tray)" = "Key expiring: This device's key expires in 5 days."
+shell_eval "Main.messageTray.getSources().forEach(source => source.destroy()); 'ok'" >/dev/null
+switch_account 1a2b nSELF000000000 "$account_a_expiry"
+check "switching back to the first account does not notify again" test "$(tray_count)" = 0
+switch_account 3c4d nOTHER0000000 "$account_b_expiry"
+check "nor does switching to the second one again" test "$(tray_count)" = 0
+check "both pairs are remembered" \
+    test "$(gsettings get "$HL_SCHEMA" notified-key-expiries | grep -o 'nSELF000000000\|nOTHER0000000' | wc -l)" = 2
+
+begin "Notifications: none with the preference off"
+show stopped disconnected
+show needs-login login
+fake_key nSELF000000000 2
+sleep 0.5
+check "no notification while the preference is off" test "$(tray_count)" = 0
+check "a key expiry not sent is not remembered" \
+    test "$(gsettings get "$HL_SCHEMA" notified-key-expiries)" = "@as []"
+gsettings set "$HL_SCHEMA" notifications true
+refresh_now
+wait_model "m.loaded"
+sleep 0.5
+check "turning it on notifies the key expiry at the next refresh, and no transition" \
+    test "$(tray)" = "Key expiring: This device's key expires in 2 days."
+
+NOTIFICATIONS=true begin "Notifications: disabling the extension removes them"
+show stopped disconnected
+show needs-login login
+check "two notifications" test "$(tray_count)" = 2
+shell_eval "Main.extensionManager.disableExtension('$HL_UUID'); 'ok'" >/dev/null
+sleep 1
+check "the tray is empty once disabled" test "$(shell_eval "Main.messageTray.getSources().length")" = 0
+
 # --- Lifecycle --------------------------------------------------------------------------------
 begin "Disabling kills a sleeping command and leaves no timer"
 fake_set status.sleep 60
@@ -1157,7 +1342,7 @@ check "the new instance kept its own answer" test "$(model state.id)" = disconne
 check "nothing touched it" test "$(model updatedAt)" = "$updated"
 
 # --- Preferences ------------------------------------------------------------------------------
-begin "A refresh interval chosen in the preferences window survives a restart"
+NOTIFICATIONS=true begin "Preferences chosen in the preferences window survive a restart"
 PREFS="global.display.list_all_windows().find(w => w.get_wm_class() === 'org.gnome.Shell.Extensions')"
 menu_open
 pointer_click "$HL_EXT._preferencesItem"
@@ -1168,6 +1353,10 @@ wait_for "$PREFS.has_focus()"
 sleep 1.5
 read -r px py <<<"$(shell_eval "(r => [r.x, r.y].join(' '))($PREFS.get_frame_rect())")"
 check "the window starts at the default interval" test "$(gsettings get "$HL_SCHEMA" refresh-interval)" = "uint32 60"
+check "the Notifications switch starts on" test "$(gsettings get "$HL_SCHEMA" notifications)" = true
+pointer_park
+gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell/Screenshot \
+    --method org.gnome.Shell.Screenshot.ScreenshotWindow true false false "$SHOTS/prefs-notifications-on.png" >/dev/null
 # Offsets of the Refresh interval row and of its "5 seconds" choice, in the default window.
 pointer_click_at $((px + 515)) $((py + 137))
 sleep 1
@@ -1175,6 +1364,10 @@ screenshot "$SHOTS/prefs-interval-open.png"
 pointer_click_at $((px + 547)) $((py + 182))
 sleep 1
 check "choosing 5 seconds saves it at once" test "$(gsettings get "$HL_SCHEMA" refresh-interval)" = "uint32 5"
+# The Notifications switch sits at the right of the row under it.
+pointer_click_at $((px + 549)) $((py + 198))
+sleep 1
+check "turning Notifications off saves it at once" test "$(gsettings get "$HL_SCHEMA" notifications)" = false
 pointer_park
 gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell/Screenshot \
     --method org.gnome.Shell.Screenshot.ScreenshotWindow true false false "$SHOTS/prefs.png" >/dev/null
@@ -1183,6 +1376,8 @@ sleep 1
 shell_restart
 check "the interval is still 5 seconds after restarting the shell" \
     test "$(gsettings get "$HL_SCHEMA" refresh-interval)" = "uint32 5"
+check "Notifications is still off after restarting the shell" \
+    test "$(gsettings get "$HL_SCHEMA" notifications)" = false
 wait_model "m.loaded"
 before=$(fake_count status)
 sleep 7.5

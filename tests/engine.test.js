@@ -25,6 +25,7 @@ function setup({interval = 10, manualGet = false} = {}) {
     const gets = [];
     const timers = [];
     const changes = [];
+    const good = [];
     let nextId = 1;
     const env = {interval, now: 1_000_000, get: ok(GET)};
     const engine = new Engine({
@@ -56,6 +57,7 @@ function setup({interval = 10, manualGet = false} = {}) {
         intervalSeconds: () => env.interval,
         userName: 'alex',
         onChange: model => changes.push(model.state.id),
+        onGoodRefresh: refresh => good.push(refresh),
     });
     const tick = () => new Promise(resolve => setImmediate(resolve));
     /** Answers the oldest unanswered call whose name matches, then lets the engine react. */
@@ -67,7 +69,10 @@ function setup({interval = 10, manualGet = false} = {}) {
         await tick();
     };
     const pending = name => calls.filter(entry => entry.name === name && !entry.done).length;
-    return {engine, calls, gets, timers, changes, env, answer, pending, tick, model: () => engine.model};
+    return {
+        engine, calls, gets, timers, changes, good, env, answer, pending, tick,
+        model: () => engine.model,
+    };
 }
 
 test('the first refresh runs status --json when the engine starts', async () => {
@@ -692,4 +697,47 @@ test('a refresh that is discarded does not list the profiles', async () => {
     await t.answer('status --json', ok(STATUS.running));
     assert.equal(t.model().state.id, 'login');
     assert.equal(listCalls(t).length, 0);
+});
+
+test('only a successful refresh that counts is passed on for notifications', async () => {
+    const t = setup();
+    t.engine.start();
+    await t.answer('status --json', fail('failed to connect to local tailscaled'));
+    assert.equal(t.good.length, 0);
+    t.timers[0].callback();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.good.length, 1);
+    assert.equal(t.good[0].state.id, 'connected');
+    assert.equal(t.good[0].status.BackendState, 'Running');
+    assert.equal(t.good[0].nowMs, 1_000_000);
+    assert.equal(t.good[0].lastActionMs, null);
+    // Not Unavailable, and not an unreadable answer either.
+    t.timers[0].callback();
+    await t.answer('status --json', ok('<html>not json</html>'));
+    assert.equal(t.good.length, 1);
+});
+
+test('a discarded refresh is not passed on, and the action time is', async () => {
+    const t = setup();
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    t.env.now = 1_005_000;
+    t.engine.runAction('down', ['down']);
+    t.engine.requestRefresh();
+    // The stale read, still Running, is discarded while the action is pending.
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.good.length, 1);
+    await t.answer('down', ok());
+    await t.answer('status --json', ok(STATUS.stopped));
+    assert.equal(t.good.length, 2);
+    assert.equal(t.good[1].state.id, 'disconnected');
+    assert.equal(t.good[1].lastActionMs, 1_005_000);
+});
+
+test('nothing is passed on after destroy', async () => {
+    const t = setup();
+    t.engine.start();
+    t.engine.destroy();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.good.length, 0);
 });

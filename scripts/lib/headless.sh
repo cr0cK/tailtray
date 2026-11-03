@@ -190,9 +190,16 @@ shell_eval() {
     reply=$(gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell \
         --method org.gnome.Shell.Eval "$HL_PRELUDE $1" 2>/dev/null) || return 1
     [[ $reply == "(true, "* ]] || return 1
-    reply=${reply#(true, \'}
-    reply=${reply%\')}
-    reply=${reply//\\\'/\'}
+    if [[ $reply == "(true, '"* ]]; then
+        reply=${reply#(true, \'}
+        reply=${reply%\')}
+        reply=${reply//\\\'/\'}
+    else
+        # A result with an apostrophe comes back double-quoted, its double quotes escaped.
+        reply=${reply#(true, \"}
+        reply=${reply%\")}
+        reply=${reply//\\\"/\"}
+    fi
     reply=${reply#\"}
     printf '%s\n' "${reply%\"}"
 }

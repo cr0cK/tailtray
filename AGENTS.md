@@ -22,6 +22,8 @@ new `src/*.js` and `src/*.svg` files on its own.
 | `src/settings.js` | Switch values of `get --json` and the `set` arguments (pure) |
 | `src/exitnodes.js` | Exit node rows, the node in use, and the `set --exit-node` arguments (pure) |
 | `src/warnings.js` | Health and key expiry warnings (pure) |
+| `src/notifications.js` | Which notifications a good refresh calls for, and the notified key expiries (pure) |
+| `src/notifier.js` | The Tailtray message source: sends them, withdraws Login required (GNOME Shell API) |
 | `src/devices.js` | Device names, sorting, copyable rows, the Other devices list (pure) |
 | `src/ping.js` | `tailscale ping` arguments, result text, and the `Pinger` that runs and kills pings (pure; commands injected) |
 | `src/time.js` | Relative times (pure) |
