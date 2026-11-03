@@ -212,6 +212,8 @@ wait_for() {
     done
     echo "Timed out waiting for: $1"
     tail -20 "$WORK/shell.log"
+    # A wait that timed out fails the run, even when the caller does not look at its status.
+    HL_FAILURES=$((HL_FAILURES + 1))
     return 1
 }
 
