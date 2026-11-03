@@ -18,6 +18,11 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
   <img src="docs/screenshots/menu-exit-node.png" alt="The Exit node submenu expanded: None, an online node, an offline node in use with a check mark, an offline node, and Allow LAN access" width="32%">
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/menu-devices.png" alt="The Other devices list: online devices with their OS, offline ones dimmed with when they were last seen" width="32%">
+  <img src="docs/screenshots/menu-devices-ping.png" alt="One device expanded: its name and addresses with copy icons, and a Ping row showing a direct result" width="32%">
+</p>
+
 ## Features
 
 - A panel icon that shows the connection state: connected, connecting or disconnected, login or
@@ -32,9 +37,12 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
   none, with an **Allow LAN access** switch. The panel icon gets an arrow while one is in use.
 - A **Settings** submenu with three switches: use Tailscale subnets, use Tailscale DNS, and block
   incoming connections.
+- The other devices of the tailnet, online first, in a scrolling list. Each one expands to its name
+  and addresses, each one click away from your clipboard, and a **Ping** that shows whether the
+  device answers directly, through a relay, or not at all.
 - A preferences window with the refresh interval.
 
-Other devices and notifications are coming in the next releases; see
+Notifications are coming in the next release; see
 [`docs/specs/TRY.md`](docs/specs/TRY.md).
 
 ## Requirements

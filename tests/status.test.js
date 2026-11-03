@@ -173,7 +173,7 @@ test('the accessible name of the icon follows the label of a pending action', ()
 
 test('the menu layout matches the spec table through P3', () => {
     const shown = id => Object.entries(sectionsOf(STATES[id])).filter(([, on]) => on).map(([name]) => name);
-    assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice', 'account', 'exitNode', 'settings']);
+    assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice', 'account', 'exitNode', 'settings', 'devices']);
     assert.deepEqual(shown('connecting'), ['identity', 'errorBlock', 'warnings', 'account']);
     assert.deepEqual(shown('disconnected'), ['identity', 'errorBlock', 'warnings', 'account', 'settings']);
     assert.deepEqual(shown('login'), ['warnings', 'loginHelp']);
@@ -182,11 +182,18 @@ test('the menu layout matches the spec table through P3', () => {
 });
 
 test('separators sit between groups and never touch', () => {
-    const seps = (device, controls) => separatorsOf({device, controls});
-    assert.deepEqual(seps(true, true), {top: true, device: true, footer: true});
-    assert.deepEqual(seps(false, true), {top: true, device: false, footer: true});
-    assert.deepEqual(seps(true, false), {top: true, device: false, footer: true});
-    assert.deepEqual(seps(false, false), {top: false, device: false, footer: true});
+    const seps = (device, controls, devices) => separatorsOf({device, controls, devices});
+    const expected = (top, device, controls) => ({top, device, controls, footer: true});
+    assert.deepEqual(seps(true, true, true), expected(true, true, true));
+    assert.deepEqual(seps(true, true, false), expected(true, true, false));
+    assert.deepEqual(seps(false, true, true), expected(true, false, true));
+    assert.deepEqual(seps(true, false, true), expected(true, true, false));
+    assert.deepEqual(seps(false, false, true), expected(true, false, false));
+    assert.deepEqual(seps(false, true, false), expected(true, false, false));
+    assert.deepEqual(seps(true, false, false), expected(true, false, false));
+    assert.deepEqual(seps(false, false, false), expected(false, false, false));
+    // Without the devices argument, as before Other devices existed.
+    assert.deepEqual(separatorsOf({device: true, controls: true}), expected(true, true, false));
 });
 
 test('connected through an exit node has the arrow glyph, whatever the exit node does', () => {

@@ -1,0 +1,50 @@
+{
+  "direct": {
+    "source": "real capture, names and addresses replaced",
+    "stdout": "pong from nas (100.64.0.2) via 192.0.2.10:41641 in 36ms\n",
+    "stderr": "",
+    "exitCode": 0
+  },
+  "direct-ipv6": {
+    "source": "real capture, names and addresses replaced",
+    "stdout": "pong from nas (100.64.0.2) via [2001:db8::10]:41641 in 23ms\n",
+    "stderr": "",
+    "exitCode": 0
+  },
+  "derp": {
+    "source": "real capture, names, address and region replaced",
+    "stdout": "pong from nas (100.64.0.2) via DERP(nyc) in 26ms\n",
+    "stderr": "",
+    "exitCode": 0
+  },
+  "derp-until-direct": {
+    "source": "format strings of cmd/tailscale/cli/ping.go at v1.104.2: the default --until-direct=true gives up after a pong that came through DERP",
+    "stdout": "pong from nas (100.64.0.2) via DERP(nyc) in 41ms\n",
+    "stderr": "direct connection not established\n",
+    "exitCode": 1
+  },
+  "peer-relay": {
+    "source": "format strings of cmd/tailscale/cli/ping.go at v1.104.2",
+    "stdout": "pong from nas (100.64.0.2) via peer-relay(192.0.2.20:40000:vni:1234) in 31ms\n",
+    "stderr": "",
+    "exitCode": 0
+  },
+  "timeout": {
+    "source": "format strings of cmd/tailscale/cli/ping.go at v1.104.2",
+    "stdout": "ping \"100.64.0.2\" timed out\n",
+    "stderr": "no reply\n",
+    "exitCode": 1
+  },
+  "no-peer": {
+    "source": "real capture, address replaced",
+    "stdout": "",
+    "stderr": "no matching peer\n",
+    "exitCode": 1
+  },
+  "garbage": {
+    "source": "invented",
+    "stdout": "<html>not a pong</html>\n",
+    "stderr": "",
+    "exitCode": 0
+  }
+}

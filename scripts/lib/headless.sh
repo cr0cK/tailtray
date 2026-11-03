@@ -38,7 +38,7 @@ headless_reexec() {
     export GSETTINGS_BACKEND=keyfile GTK_A11Y=none
     export GSETTINGS_SCHEMA_DIR=$XDG_DATA_HOME/gnome-shell/extensions/$HL_UUID/schemas
     # The display name stays short: the Wayland socket path must fit in 108 bytes.
-    export WAYLAND_DISPLAY=tailtray-hl
+    export WAYLAND_DISPLAY=tailtray-hl-$$
     # The fake tailscale comes first on PATH, so no run reaches the real tailnet.
     export TAILTRAY_FAKE_DIR=$WORK/fake
     mkdir -p "$WORK/bin" "$TAILTRAY_FAKE_DIR"
@@ -94,6 +94,35 @@ fake_count() {
     fake_calls | awk -v key="$1" '$1 == key' | wc -l
 }
 
+# Replaces the peers of the fake by the six devices and the Mullvad node, plus $1 bulk devices
+# (every third offline), with last seen times that are relative to now.
+fake_devices() {
+    python3 - "$TAILTRAY_FAKE_DIR/status.json" "${1:-0}" <<'PY'
+import datetime, json, sys
+path, extra = sys.argv[1], int(sys.argv[2])
+d = json.load(open(path))
+now = datetime.datetime.now(datetime.timezone.utc)
+def seen(days):
+    return (now - datetime.timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+def peer(n, name, os, online, days=0, **more):
+    return {'ID': 'nDEV%s' % n, 'HostName': name, 'DNSName': '%s.tail1234.ts.net.' % name, 'OS': os,
+            'TailscaleIPs': ['100.64.1.%s' % n, 'fd7a:115c:a1e0::%s' % n], 'Online': online,
+            'ExitNode': False, 'ExitNodeOption': False, 'LastSeen': seen(days), **more}
+peers = [peer(1, 'home-router', 'linux', True), peer(2, 'laptop', 'macOS', True),
+         peer(3, 'paris-vps', 'linux', True), peer(4, 'phone', 'iOS', True),
+         peer(5, 'nas', 'linux', False, 3), peer(6, 'tokyo-vps', 'linux', False, 65),
+         peer(7, 'mullvad-fr', 'linux', True, ExitNodeOption=True,
+              Location={'Country': 'France', 'CountryCode': 'FR', 'City': 'Paris'})]
+for i in range(extra):
+    peers.append(peer(100 + i, 'bulk-%03d' % i, 'linux', i % 3 != 0, 1))
+d['Peer'] = {'nodekey:' + p['ID']: p for p in peers}
+open(path, 'w').write(json.dumps(d))
+PY
+}
+# What the fake prints for a ping of 100.64.1.$1: a pong from $2 via $3 in $4.
+fake_pong() {
+    fake_set "ping.100.64.1.$1.out" "pong from $2 (100.64.1.$1) via $3 in $4"
+}
 headless_boot() {
     trap headless_cleanup EXIT
     local extensions=$XDG_DATA_HOME/gnome-shell/extensions
@@ -124,7 +153,7 @@ JS
 
 shell_start() {
     gnome-shell --headless --wayland --no-x11 --wayland-display="$WAYLAND_DISPLAY" \
-        --virtual-monitor 1280x800 >>"$WORK/shell.log" 2>&1 &
+        --virtual-monitor 1280x1200 >>"$WORK/shell.log" 2>&1 &
     HL_SHELL_PID=$!
     wait_for "Main.extensionManager.lookup('$HL_UUID')?.state === 1"
     wait_for "Main.layoutManager._startingUp === false"

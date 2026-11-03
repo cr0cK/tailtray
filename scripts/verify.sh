@@ -752,7 +752,7 @@ menu_open
 open_submenu _exitMenu
 SCROLL="$HL_EXT._exitMenu.menu.actor"
 check "the submenu lists the 300 nodes and nas" test "$(shell_eval "$HL_EXT._exitItems.size")" = 301
-# The headless screen is only 800 px high, so the main menu may squeeze the submenu below its
+# The headless screen is only 1200 px high, so the main menu may squeeze the submenu below its
 # natural height: the natural height is what the 280 px cap limits.
 check "the submenu is at most 280 px high" \
     test "$(shell_eval "$SCROLL.get_preferred_height(-1)[1]")" = 280
@@ -796,6 +796,274 @@ check "the row summary follows" test "$(shell_eval "$HL_EXT._exitSummary.text")"
 check "the order is by name, the new node after exit-299's place" \
     test "$(shell_eval "$HL_EXT._exitMenu.menu._getMenuItems().slice(-4).map(item => item.nameLabel?.text ?? item.label.text).join()")" = \
     "exit-298,exit-new,nas,Allow LAN access"
+menu_close
+
+# --- Other devices ----------------------------------------------------------------------------
+# Devices are keyed by peer ID: nDEV1 home-router, 2 laptop, 3 paris-vps, 4 phone (online), 5 nas
+# (seen 3 days ago), 6 tokyo-vps (seen 2 months ago), and 7 mullvad-fr, which has a Location and
+# is never listed. Addresses are 100.64.1.<n> and fd7a:115c:a1e0::<n>.
+dev() { echo "$HL_EXT._deviceEntries.get('nDEV$1')"; }
+# One value per listed device, in order: a JavaScript expression of the entry `e`.
+dev_texts() {
+    shell_eval "[...$HL_EXT._deviceEntries.values()].map(e => $1).join('|')"
+}
+# The names of the devices in the order the list shows them, not the order the rows were made in.
+dev_order() {
+    shell_eval "$HL_EXT._devicesList.box.get_children().map(a => a._delegate.nameLabel?.text ?? [...$HL_EXT._deviceEntries.values()].find(e => e.section.actor === a).row.nameLabel.text).join('|')"
+}
+# The arguments of every ping the fake received, one per line.
+ping_calls() { fake_calls | awk '$1 == "ping"' | sed 's/^ping ping //'; }
+# Shows the devices of the fake in the model.
+show_devices() {
+    fake_devices "${1:-0}"
+    refresh_now
+    wait_model "m.status.Peer['nodekey:nDEV1'] !== undefined"
+}
+
+begin "Other devices: list, order, expanding, ping results"
+show_devices
+menu_open
+check "the caption counts the listed devices" \
+    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text")" = "Other devices · 4 of 6 online"
+check "online devices come first, each group by name; the Location peer is not listed" \
+    test "$(dev_order)" = "home-router|laptop|paris-vps|phone|nas|tokyo-vps"
+check "an online device shows its OS, an offline one when it was last seen" \
+    test "$(dev_texts "e.row.detailLabel.text")" = "linux|macOS|linux|iOS|3 days ago|2 months ago"
+check "offline names are dimmed" \
+    test "$(dev_texts "e.row.nameLabel.opacity < 255")" = "false|false|false|false|true|true"
+check "no device is expanded" test "$(dev_texts "e.body.actor.visible")" = "false|false|false|false|false|false"
+check "the list sits between Settings and the footer, a separator on each side" \
+    test "$(shell_eval "(items => [items.indexOf($HL_EXT._settingsMenu) < items.indexOf($HL_EXT._separators.controls), items.indexOf($HL_EXT._separators.controls) < items.indexOf($HL_EXT._devicesCaption), items.indexOf($HL_EXT._devicesCaption) < items.indexOf($HL_EXT._devicesSection), items.indexOf($HL_EXT._devicesSection) < items.indexOf($HL_EXT._separators.footer), $HL_EXT._separators.controls.visible, $HL_EXT._separators.footer.visible].join())($HL_EXT._indicator.menu._getMenuItems())")" = "true,true,true,true,true,true"
+pointer_park
+menu_shot "$SHOTS/menu-devices.png"
+
+pointer_click "$(dev 1).row"
+check "a click expands a device" test "$(dev_texts "e.body.actor.visible")" = "true|false|false|false|false|false"
+check "it shows its name and addresses with a copy icon, then Ping" \
+    test "$(shell_eval "$(dev 1).body._getMenuItems().filter(i => i.visible).map(i => i.valueLabel?.text ?? 'Ping').join()")" = \
+    "home-router.tail1234.ts.net,100.64.1.1,fd7a:115c:a1e0::1,Ping"
+pointer_click "$(dev 2).row"
+check "expanding another device collapses the one that was open" \
+    test "$(dev_texts "e.body.actor.visible")" = "false|true|false|false|false|false"
+pointer_click "$(dev 2).row"
+check "a click on the expanded device collapses it" \
+    test "$(dev_texts "e.body.actor.visible")" = "false|false|false|false|false|false"
+
+# Each kind of result, from outputs captured by the real CLI or built from its format strings.
+fake_pong 1 home-router 192.0.2.10:41641 4ms
+fake_pong 2 laptop "DERP(nyc)" 26ms
+fake_pong 3 paris-vps "peer-relay(192.0.2.20:40000:vni:1234)" 31ms
+fake_set ping.100.64.1.4.out 'ping "100.64.1.4" timed out'
+fake_set ping.100.64.1.4.err 'no reply'
+fake_set ping.100.64.1.4.exit 1
+for n in 1 2 3 4; do
+    pointer_click "$(dev $n).row"
+    pointer_click "$(dev $n).ping"
+    wait_for "$(dev $n).ping.resultLabel.text !== '…' && $(dev $n).ping.resultLabel.text !== ''" 10
+    pointer_click "$(dev $n).row"
+done
+check "each Ping ran tailscale ping -c 1 --until-direct=false --timeout 5s on the IPv4 address" \
+    test "$(ping_calls | sort | tr '\n' ,)" = \
+    "-c 1 --until-direct=false --timeout 5s 100.64.1.1,-c 1 --until-direct=false --timeout 5s 100.64.1.2,-c 1 --until-direct=false --timeout 5s 100.64.1.3,-c 1 --until-direct=false --timeout 5s 100.64.1.4,"
+check "each result is shown on its row: direct, relay, peer relay, no answer" \
+    test "$(dev_texts "e.ping.resultLabel.text")" = "direct · 4 ms|relay nyc · 26 ms|peer relay · 31 ms|no answer||"
+check "a ping keeps the menu open" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
+pointer_click "$(dev 1).row"
+sleep 0.3
+check "the result is still there when the device is expanded again" \
+    test "$(shell_eval "$(dev 1).ping.resultLabel.text + '|' + $(dev 1).ping.resultLabel.visible")" = "direct · 4 ms|true"
+pointer_park
+menu_shot "$SHOTS/menu-devices-ping.png"
+menu_close
+
+begin "Other devices: Ping is insensitive for an offline device or one without an IPv4 address"
+fake_devices
+edit_status "d['Peer']['nodekey:nDEV4']['TailscaleIPs'] = ['fd7a:115c:a1e0::4']"
+refresh_now
+wait_model "m.status.Peer['nodekey:nDEV4'].TailscaleIPs.length === 1"
+menu_open
+check "Ping is sensitive for an online device with an IPv4 address only" \
+    test "$(dev_texts "e.ping.reactive")" = "true|true|true|false|false|false"
+pointer_click "$(dev 5).row"
+check "an expanded offline device shows its addresses and a greyed Ping" \
+    test "$(shell_eval "$(dev 5).body.actor.visible + '|' + $(dev 5).ping.reactive + '|' + $(dev 5).copy.ipv4.valueLabel.text")" = "true|false|100.64.1.5"
+shell_eval "$(dev 5).ping.activate(null); $(dev 4).ping.activate(null); 'ok'" >/dev/null
+sleep 1
+check "activating an insensitive Ping runs nothing" test "$(fake_count ping)" = 0
+check "and shows no result" test "$(dev_texts "e.ping.resultLabel.visible")" = "false|false|false|false|false|false"
+pointer_park
+menu_shot "$SHOTS/menu-devices-offline.png"
+menu_close
+
+begin "Other devices: a refresh keeps the expanded device and its ping result"
+fake_pong 2 laptop 192.0.2.11:41641 7ms
+show_devices
+menu_open
+pointer_click "$(dev 2).row"
+pointer_click "$(dev 2).ping"
+wait_for "$(dev 2).ping.resultLabel.text === 'direct · 7 ms'" 10
+shell_eval "globalThis.__laptop = $(dev 2); 'ok'" >/dev/null
+# A device goes offline, one arrives and sorts first, another vanishes.
+edit_status "
+d['Peer']['nodekey:nDEV3']['Online'] = False
+d['Peer']['nodekey:nDEV3']['LastSeen'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+del d['Peer']['nodekey:nDEV6']
+d['Peer']['nodekey:new'] = dict(d['Peer']['nodekey:nDEV1'], ID='nDEV8', HostName='aaa-new', DNSName='aaa-new.tail1234.ts.net.', TailscaleIPs=['100.64.1.8'])"
+refresh_now
+wait_model "m.status.Peer['nodekey:new'] !== undefined"
+sleep 0.5
+check "the device is the same row, still expanded, with its result" \
+    test "$(shell_eval "$(dev 2) === globalThis.__laptop && $(dev 2).body.actor.visible && $(dev 2).ping.resultLabel.text === 'direct · 7 ms'")" = true
+check "the list follows the new status" \
+    test "$(dev_order)" = "aaa-new|home-router|laptop|phone|nas|paris-vps"
+check "the caption follows" test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text")" = "Other devices · 4 of 6 online"
+check "the menu is still open" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
+# An expanded device that vanishes takes its expansion and result with it.
+edit_status "del d['Peer']['nodekey:nDEV2']"
+refresh_now
+wait_model "m.status.Peer['nodekey:nDEV2'] === undefined"
+sleep 0.3
+check "a vanished device has no row, and nothing else is expanded" \
+    test "$(dev_texts "e.body.actor.visible")" = "false|false|false|false|false"
+menu_close
+
+begin "Other devices: 60 devices scroll within 280 px"
+fake_devices 54
+refresh_now
+wait_model "Object.keys(m.status.Peer).length > 60"
+menu_open
+SCROLL="$HL_EXT._devicesScroll"
+check "the list holds the 60 devices" test "$(shell_eval "$HL_EXT._deviceEntries.size")" = 60
+check "the caption counts all of them" \
+    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text")" = "Other devices · 40 of 60 online"
+check "the list is at most 280 px high" test "$(shell_eval "$SCROLL.get_preferred_height(-1)[1]")" = 280
+check "its rows are far taller than that, so they scroll" \
+    test "$(shell_eval "$SCROLL.vadjustment.upper > 5 * $SCROLL.vadjustment.page_size")" = true
+pointer_park
+menu_shot "$SHOTS/menu-devices-60-top.png"
+read -r sx sy <<<"$(shell_eval "(([x, y], [w, h]) => [x + w / 2, y + h / 2].join(' '))($SCROLL.get_transformed_position(), $SCROLL.get_transformed_size())")"
+shell_eval "globalThis.__pointer.notify_absolute_motion(GLib.get_monotonic_time(), $sx, $sy); 'ok'" >/dev/null
+sleep 0.4
+for _ in 1 2 3 4 5; do
+    shell_eval "globalThis.__pointer.notify_discrete_scroll(GLib.get_monotonic_time(),
+        Clutter.ScrollDirection.DOWN, Clutter.ScrollSource.WHEEL); 'ok'" >/dev/null
+    sleep 0.2
+done
+sleep 0.5
+check "the mouse wheel scrolls the rows" test "$(shell_eval "$SCROLL.vadjustment.value > 50")" = true
+shell_eval "$SCROLL.vadjustment.value = 600; 'ok'" >/dev/null
+sleep 0.5
+pointer_park
+menu_shot "$SHOTS/menu-devices-60-scrolled.png"
+shell_eval "globalThis.__row = $(dev 100); 'ok'" >/dev/null
+refresh_now
+sleep 1
+check "a refresh keeps the rows and the scroll position" \
+    test "$(shell_eval "$(dev 100) === globalThis.__row && Math.round($SCROLL.vadjustment.value)")" = 600
+menu_close
+
+begin "Other devices: closing the menu during a slow ping kills it, and reopening shows no result"
+fake_pong 1 home-router 192.0.2.10:41641 4ms
+fake_set ping.100.64.1.1.sleep 30
+show_devices
+menu_open
+pointer_click "$(dev 1).row"
+pointer_click "$(dev 1).ping"
+wait_for "$(dev 1).ping.resultLabel.text === '…'" 10
+check "the ping runs and shows …" test "$(pids_of_fake)" -ge 1
+shell_eval "$(dev 1).ping.activate(null); 'ok'" >/dev/null
+sleep 0.5
+check "a second Ping on the same device does nothing" test "$(fake_count ping)" = 1
+menu_close
+sleep 1
+check "closing the menu killed the ping" test "$(pids_of_fake)" = 0
+fake_unset ping.100.64.1.1.sleep
+menu_open
+check "reopening shows no result and no expanded device" \
+    test "$(shell_eval "$(dev 1).ping.resultLabel.visible + '|' + $(dev 1).ping.resultLabel.text + '|' + $(dev 1).body.actor.visible")" = "false||false"
+sleep 2
+check "and none appears later" test "$(shell_eval "$(dev 1).ping.resultLabel.text")" = ""
+menu_close
+
+begin "Other devices: two devices ping at once, while an action runs"
+fake_pong 1 home-router 192.0.2.10:41641 4ms
+fake_pong 2 laptop "DERP(nyc)" 26ms
+fake_set ping.sleep 3
+fake_set down.sleep 4
+show_devices
+menu_open
+shell_eval "$HL_EXT._header.activate(null); 'ok'" >/dev/null
+sleep 0.3
+start=$(date +%s.%N)
+shell_eval "$(dev 1).ping.activate(null); $(dev 2).ping.activate(null); 'ok'" >/dev/null
+sleep 1
+check "an action is pending and both pings run next to it" \
+    test "$(model pending.kind)|$(pids_of_fake)" = "down|3"
+check "both rows show …" test "$(dev_texts "e.ping.resultLabel.text" | cut -d'|' -f1-2)" = "…|…"
+wait_for "$(dev 1).ping.resultLabel.text !== '…' && $(dev 2).ping.resultLabel.text !== '…'" 10
+elapsed=$(python3 -c "print($(date +%s.%N) - $start)")
+check "the pings overlapped: both answered in about 3 s, not 6" \
+    test "$(python3 -c "print(int(3 <= $elapsed < 5))")" = 1
+check "each row has its own result" \
+    test "$(dev_texts "e.ping.resultLabel.text" | cut -d'|' -f1-2)" = "direct · 4 ms|relay nyc · 26 ms"
+wait_model "m.pending === null" 10
+menu_close
+
+begin "Other devices: a ping past its time limit reads no answer, a vanished device's ping is killed"
+fake_set ping.sleep 60
+show_devices
+shell_eval "GLib.setenv('TAILTRAY_TIMEOUT_SECONDS', '2', true); 'ok'" >/dev/null
+ext_reload
+wait_model "m.loaded"
+menu_open
+shell_eval "$(dev 1).ping.activate(null); 'ok'" >/dev/null
+wait_for "$(dev 1).ping.resultLabel.text === 'no answer'" 8
+check "the ping killed at its limit reads no answer" test "$(shell_eval "$(dev 1).ping.resultLabel.text")" = "no answer"
+check "and no tailscale child is left" test "$(pids_of_fake)" = 0
+menu_close
+shell_eval "GLib.unsetenv('TAILTRAY_TIMEOUT_SECONDS'); 'ok'" >/dev/null
+ext_reload
+wait_model "m.loaded"
+menu_open
+shell_eval "$(dev 2).ping.activate(null); 'ok'" >/dev/null
+sleep 0.7
+check "a slow ping runs" test "$(pids_of_fake)" -ge 1
+edit_status "del d['Peer']['nodekey:nDEV2']"
+refresh_now
+wait_model "m.status.Peer['nodekey:nDEV2'] === undefined"
+sleep 1
+check "the device vanished: its ping was killed" test "$(pids_of_fake)" = 0
+menu_close
+
+begin "Other devices: disabling kills a ping; other states and an empty tailnet"
+fake_set ping.sleep 60
+show_devices
+menu_open
+shell_eval "$(dev 1).ping.activate(null); 'ok'" >/dev/null
+sleep 0.7
+check "a slow ping runs" test "$(pids_of_fake)" -ge 1
+shell_eval "Main.extensionManager.disableExtension('$HL_UUID'); 'ok'" >/dev/null
+sleep 1
+check "disabling killed it" test "$(pids_of_fake)" = 0
+check "disabling with the menu open touched no destroyed actor" \
+    test "$(grep -c 'disposed' "$WORK/shell.log")" = 0
+shell_eval "Main.extensionManager.enableExtension('$HL_UUID'); 'ok'" >/dev/null
+wait_for "Main.extensionManager.lookup('$HL_UUID')?.state === 1"
+wait_model "m.loaded"
+show stopped disconnected
+menu_open
+check "Disconnected shows no Other devices" \
+    test "$(shell_eval "$HL_EXT._devicesCaption.visible + '|' + $HL_EXT._devicesSection.actor.visible")" = "false|false"
+menu_close
+fake_state running
+edit_status "d['Peer'] = {}"
+refresh_now
+wait_model "m.state.id === 'connected' && Object.keys(m.status.Peer).length === 0"
+menu_open
+check "without peers the caption reads No other devices and there is no row" \
+    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text + '|' + $HL_EXT._devicesSection.actor.visible + '|' + $HL_EXT._deviceEntries.size")" = "No other devices|false|0"
+pointer_park
+menu_shot "$SHOTS/menu-devices-none.png"
 menu_close
 
 # --- Reading the state ------------------------------------------------------------------------

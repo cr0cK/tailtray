@@ -1,17 +1,4 @@
-import {compareNames, deviceName, firstAddress} from './devices.js';
-
-/** The peers of a status as `[key, peer]` pairs, skipping anything that is not an object. */
-function peersOf(status) {
-    const peers = status?.Peer;
-    if (peers === null || typeof peers !== 'object' || Array.isArray(peers))
-        return [];
-    return Object.entries(peers).filter(([, peer]) => peer !== null && typeof peer === 'object');
-}
-
-/** A peer's row id: its `ID`, else its key in `Peer`. */
-function peerId(key, peer) {
-    return typeof peer.ID === 'string' && peer.ID !== '' ? peer.ID : key;
-}
+import {compareNames, deviceName, firstAddress, peerId, peersOf} from './devices.js';
 
 /** The peer in use as exit node, `{id, name}`, or null: the first peer whose `ExitNode` is true. */
 export function exitNodeInUse(status) {
