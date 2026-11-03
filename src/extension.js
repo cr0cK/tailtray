@@ -389,6 +389,9 @@ export default class TailtrayExtension extends Extension {
         const menu = this._exitMenu.menu;
         menu.actor.style = `max-height: ${SUBMENU_HEIGHT - SUBMENU_CHROME}px;`;
         menu.actor.vscrollbar_policy = St.PolicyType.AUTOMATIC;
+        // open() resets the policy to NEVER unless the main menu itself needs a scrollbar, which
+        // lets the rows grow past the cap on a tall screen: always scroll.
+        menu._needsScrollbar = () => true;
 
         this._exitNone = this._exitNodeItem('None');
         this._exitNone.onActivate(() => {

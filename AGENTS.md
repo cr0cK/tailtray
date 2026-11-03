@@ -57,7 +57,7 @@ a real tailnet, and writes screenshots to `dist/verify-shots/`. Extend it with a
 every user-visible behavior you add, and look at the screenshots. The recipe, if you need your own:
 
 - Launch `gnome-shell --headless --wayland --no-x11 --wayland-display=<short-name>
-  --virtual-monitor 1280x800` inside `dbus-run-session`, with `XDG_DATA_HOME`, `XDG_CONFIG_HOME`
+  --virtual-monitor 1280x1200` inside `dbus-run-session`, with `XDG_DATA_HOME`, `XDG_CONFIG_HOME`
   and `XDG_CACHE_HOME` pointing at a scratch directory and `GSETTINGS_BACKEND=keyfile`. Seed
   `org.gnome.shell enabled-extensions` in that keyfile, and never touch the user's dconf.
 - The Wayland socket path must stay under 108 bytes, so keep the display name short and leave

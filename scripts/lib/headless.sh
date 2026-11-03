@@ -38,7 +38,7 @@ headless_reexec() {
     export GSETTINGS_BACKEND=keyfile GTK_A11Y=none
     export GSETTINGS_SCHEMA_DIR=$XDG_DATA_HOME/gnome-shell/extensions/$HL_UUID/schemas
     # The display name stays short: the Wayland socket path must fit in 108 bytes.
-    export WAYLAND_DISPLAY=tailtray-hl
+    export WAYLAND_DISPLAY=tailtray-hl-$$
     # The fake tailscale comes first on PATH, so no run reaches the real tailnet.
     export TAILTRAY_FAKE_DIR=$WORK/fake
     mkdir -p "$WORK/bin" "$TAILTRAY_FAKE_DIR"
@@ -124,7 +124,7 @@ JS
 
 shell_start() {
     gnome-shell --headless --wayland --no-x11 --wayland-display="$WAYLAND_DISPLAY" \
-        --virtual-monitor 1280x800 >>"$WORK/shell.log" 2>&1 &
+        --virtual-monitor 1280x1200 >>"$WORK/shell.log" 2>&1 &
     HL_SHELL_PID=$!
     wait_for "Main.extensionManager.lookup('$HL_UUID')?.state === 1"
     wait_for "Main.layoutManager._startingUp === false"
