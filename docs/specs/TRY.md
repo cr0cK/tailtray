@@ -358,8 +358,8 @@ The error text depends on the failure, checked in this order:
   neither. A change between Login required and Approval required sends nothing. The body is the
   new header label. Activating the notification opens the menu. The notification is withdrawn
   once the state leaves Login required and Approval required.
-- From Connected to Login required or Approval required, Connection lost and Login required are
-  both sent.
+- From Connected to Login required or Approval required, both rules apply on their own: Login
+  required is sent, and so is Connection lost unless the 30-second action window suppresses it.
 - **Exit node offline**: the same peer, by its `ID`, was the exit node in use and online at the
   previous refresh, and is the exit node in use and offline now. The body names it.
 - **Key expiring**: `Self.KeyExpiry` is within 7 days and the pair (`Self.ID`, `KeyExpiry`) is not
