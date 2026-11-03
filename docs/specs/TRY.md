@@ -71,6 +71,9 @@ Tailtray derives one state from `BackendState` of `tailscale status --json`:
 | Approval required | `NeedsMachineAuth` | `Waiting for approval` |
 | Unavailable | The CLI is missing, the call fails, times out, or prints JSON Tailtray cannot read, or `BackendState` has any other value | `Unavailable` |
 
+- Until the first refresh after the extension is enabled answers, Tailtray shows Connecting: the
+  dimmed outlined icon, and a menu with the header, its switch on and insensitive, and the footer.
+
 ## Panel icon
 
 - The panel shows one symbolic icon and no text. The icon is Tailtray's own glyph, not the
@@ -99,8 +102,11 @@ The menu shows these sections, top to bottom. A section that a state does not li
 | Other devices | yes | no | no | no | no |
 | Footer | yes | yes | yes | yes | yes |
 
-Separators sit between groups as in the mockup: after the warnings, after This device, after
-Settings, and before the footer. Two separators never touch.
+The sections form five groups, top to bottom: the top group (Header, Identity line, the Login
+required and Approval required lines, Error block, Warnings), This device, the controls (Account,
+Exit node, Settings), Other devices, and the Footer. The top group and the footer always show; any
+other group shows when one of its sections does. One separator sits between each two consecutive
+groups that show, as in the mockup, so two separators never touch.
 
 ### Header
 
@@ -150,6 +156,8 @@ Settings, and before the footer. Two separators never touch.
   `This device's key expires in <n> days.` (`in less than a day` under 24 hours, and
   `This device's key has expired.` once past). A missing or zero `KeyExpiry` means the key does
   not expire.
+- `<n>` is the number of whole days left, rounded down, and reads `1 day` for one: 7 days and 23
+  hours left show no warning, exactly 7 days show `7 days`.
 - One warning shows as a yellow line under the identity line. Two or more show as a collapsed
   **Warnings (<n>)** submenu, one line each.
 - Each warning line wraps; it is not truncated.
@@ -165,14 +173,22 @@ Settings, and before the footer. Two separators never touch.
 
 - A submenu row **Account** with the current tailnet on its right, followed by one row per
   profile of `tailscale switch --list --json`.
+- The current tailnet is `CurrentTailnet.Name` of the status, else the title of the profile
+  whose `selected` is true, else nothing.
 - `tailscale switch --list --json` runs whenever the Account section appears in an open menu (when
   the menu opens, or when a refresh shows the section while the menu is open) and after every
   account switch; never on other refreshes, and never while the section is hidden.
+- After an account switch, the list is requested again while the section shows, even when the
+  menu closed meanwhile. When two requests overlap, only the answer of the latest one counts.
 - Until it answers, the submenu shows the profiles of the last answer, insensitive, or a single
   insensitive `Loading…` row when there was none. When it fails, the submenu shows a single
   insensitive `Could not list accounts` row.
-- Each profile row shows the tailnet, and the account under it in dim text. The profile whose
-  `selected` is true has a check mark.
+- The command fails when it fails as a command, or when its output is not a JSON array. Every
+  object of the array is a profile row, in order, and every field is optional. An empty array
+  shows no row and no error.
+- Each profile row shows its title, and the account under it in dim text. The title is
+  `tailnet`, else `nickname`, else `id`, else `account`. The profile whose `selected` is true has
+  a check mark. A profile without an `id` has an insensitive row.
 - Activating another profile runs `tailscale switch <id>`. Activating the selected profile does
   nothing.
 - Logging in to a new account, logging out, and removing an account are not offered.
@@ -183,7 +199,7 @@ Settings, and before the footer. Two separators never touch.
 - Its rows are **None**, then every peer whose `ExitNodeOption` or `ExitNode` is true, sorted by
   name (see Device names), then an **Allow LAN access** switch.
 - Each exit node row shows a dot, green when the peer is online, grey when not. An offline peer's
-  row is insensitive and shows an `offline` badge, unless it is the exit node in use.
+  row shows an `offline` badge, and is insensitive unless it is the exit node in use.
 - The exit node in use is the peer whose `ExitNode` is true. Its row has a check mark, even when
   the peer is no longer an exit node option. With none, **None** has the check mark.
 - Activating an exit node runs `tailscale set --exit-node=<address>`, where the address is its
@@ -328,21 +344,29 @@ The error text depends on the failure, checked in this order:
 - The first successful refresh after the extension is enabled sets a baseline and sends no
   transition notification. Failed refreshes before it do not count. The key expiry notification
   is not a transition and can be sent then.
+- The **Notifications** preference only gates sending. While it is off, every good refresh still
+  becomes the previous one, nothing is sent, and no expiry pair is stored. Turning it on replays
+  no transition; a key expiry not notified yet is sent at the next good refresh.
 - A failed refresh is not a transition: the next good refresh is compared with the last good one.
   A discarded refresh (see Reading the state) is ignored the same way: it is never the baseline,
   never the previous refresh, and never sends a notification.
   "Previous" below means the last good refresh, and an Unavailable refresh is never compared.
 - **Connection lost**: the previous refresh was Connected and this one is not, and no action of
-  Tailtray started in the last 30 seconds. The body is the new header label.
-- **Login required**: the state becomes Login required or Approval required, from any other
-  state. The body is the new header label. Activating the notification opens the menu. The notification is withdrawn once the
-  state leaves Login required and Approval required.
+  Tailtray started less than 30 seconds before this refresh (exactly 30 seconds notifies). The
+  actions are those of Actions; a ping is not one. The body is the new header label.
+- **Login required**: the state becomes Login required or Approval required, from a state that is
+  neither. A change between Login required and Approval required sends nothing. The body is the
+  new header label. Activating the notification opens the menu. The notification is withdrawn
+  once the state leaves Login required and Approval required.
+- From Connected to Login required or Approval required, both rules apply on their own: Login
+  required is sent, and so is Connection lost unless the 30-second action window suppresses it.
 - **Exit node offline**: the same peer, by its `ID`, was the exit node in use and online at the
   previous refresh, and is the exit node in use and offline now. The body names it.
 - **Key expiring**: `Self.KeyExpiry` is within 7 days and the pair (`Self.ID`, `KeyExpiry`) is not
   among the pairs Tailtray already notified, which it stores in settings, keeping the last 10.
-  The body is the warning text. A new key, with a new expiry, or another device of another
-  account, can be notified again.
+  "Within 7 days" includes a key already expired. The body is the warning text (see Warnings). A
+  new key, with a new expiry, or another device of another account, can be notified again. A
+  status without `Self.ID` never sends it.
 - Activating any other notification opens the menu.
 
 ## Preferences
