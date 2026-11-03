@@ -16,7 +16,8 @@ Per command, KEY being status, get, switch-list, up, down, set, switch, or ping:
   KEY.stdout  printed instead of the usual reply, for garbage output
   KEY.noeffect  succeed without changing the files below
 Effects: `up` sets BackendState to Running and `down` to Stopped in status.json, `set` updates
-get.json, and `switch <id>` moves `selected` in switch.json. `up` with any flag fails, as a reminder
+get.json (and, for `--exit-node=<address>`, moves `ExitNode` to the peer that has the address, or
+clears it for an empty value, in status.json), and `switch <id>` moves `selected` in switch.json. `up` with any flag fails, as a reminder
 that Tailtray never passes one.
 """
 import json
@@ -116,6 +117,15 @@ elif key == 'set':
             name, _, value = flag.lstrip('-').partition('=')
             data[name] = {'true': True, 'false': False}.get(value, value)
     update_json('get.json', apply)
+
+    def choose(data):
+        for flag in args[1:]:
+            name, _, value = flag.lstrip('-').partition('=')
+            if name == 'exit-node':
+                for peer in data.get('Peer', {}).values():
+                    peer['ExitNode'] = value != '' and value in peer.get('TailscaleIPs', [])
+    if any(flag.startswith('--exit-node=') for flag in args[1:]):
+        update_json('status.json', choose)
 elif key == 'switch':
     def select(data):
         for profile in data:

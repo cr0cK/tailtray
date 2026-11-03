@@ -14,19 +14,29 @@ import {accountRows, currentTailnet} from './accounts.js';
 import {deviceRows} from './devices.js';
 import {Engine} from './engine.js';
 import {ADMIN_CONSOLE_URL} from './errors.js';
+import {exitNodeArguments, exitNodeInUse, exitNodeRows} from './exitnodes.js';
 import {CommandRunner} from './runner.js';
-import {setArguments, settingRows, SETTINGS} from './settings.js';
+import {LAN_ACCESS, setArguments, settingRows, SETTINGS, switchRow} from './settings.js';
 import {headerModel, identityLine, panelIconModel, sectionsOf, separatorsOf} from './status.js';
 import {relativeTime} from './time.js';
 import {buildWarnings} from './warnings.js';
 
 // Text and badge colours, readable on the dark and on the light Shell theme.
 const PALETTES = {
-    dark: {warning: '#f6d32d', error: '#ff7b63'},
-    light: {warning: '#9c6e03', error: '#c01c28'},
+    dark: {warning: '#f6d32d', error: '#ff7b63', online: '#57e389', offline: '#77767b'},
+    light: {warning: '#9c6e03', error: '#c01c28', online: '#26a269', offline: '#9a9996'},
 };
+// The Exit node submenu is at most 280 px high and scrolls past that. The theme adds 8 px of
+// border and padding to the content's max-height, so the content stops 8 px short of it.
+const SUBMENU_HEIGHT = 280;
+const SUBMENU_CHROME = 8;
 const DIM_OPACITY = 170;
 const OUTLINE_DIM_OPACITY = 115;
+const GLYPH_FILES = {
+    filled: 'tailtray-symbolic.svg',
+    exit: 'tailtray-exit-symbolic.svg',
+    outline: 'tailtray-outline-symbolic.svg',
+};
 const TITLE_STYLE = 'font-weight: bold;';
 
 /** Dims text with opacity: the Shell theme has no `dim-label` class. */
@@ -61,6 +71,17 @@ function setStateText(label, text, color) {
     label.text = text;
     label.style = `font-size: 0.9em;${color ? ` color: ${color};` : ''}`;
     label.opacity = color ? 255 : DIM_OPACITY;
+}
+
+/**
+ * Shows a value on the right of a submenu row, before its arrow, and returns its label.
+ */
+function addSubmenuValue(submenuItem) {
+    const label = dimLabel('', {x_expand: true, x_align: Clutter.ActorAlign.END});
+    // The arrow no longer takes the free space, so the value sits right before it.
+    submenuItem._triangleBin.x_expand = false;
+    submenuItem.insert_child_below(label, submenuItem._triangleBin);
+    return label;
 }
 
 /**
@@ -193,6 +214,11 @@ export default class TailtrayExtension extends Extension {
         this._accountTailnet = null;
         this._accountKey = null;
         this._accountItems = null;
+        this._exitMenu = null;
+        this._exitSummary = null;
+        this._exitNone = null;
+        this._exitItems = null;
+        this._lanItem = null;
         this._settingsMenu = null;
         this._settingItems = null;
         this._separators = null;
@@ -305,28 +331,18 @@ export default class TailtrayExtension extends Extension {
         menu.addMenuItem(this._separators.device);
 
         this._accountMenu = new PopupMenu.PopupSubMenuMenuItem('Account');
-        this._accountTailnet = dimLabel('', {x_expand: true, x_align: Clutter.ActorAlign.END});
-        // The arrow no longer takes the free space, so the tailnet sits right before it.
-        this._accountMenu._triangleBin.x_expand = false;
-        this._accountMenu.insert_child_below(this._accountTailnet, this._accountMenu._triangleBin);
+        this._accountTailnet = addSubmenuValue(this._accountMenu);
         this._accountItems = new Map();
         menu.addMenuItem(this._accountMenu);
+
+        this._buildExitNodeMenu();
+        menu.addMenuItem(this._exitMenu);
 
         this._settingsMenu = new PopupMenu.PopupSubMenuMenuItem('Settings');
         this._settingItems = {};
         for (const {id, label} of SETTINGS) {
-            const item = new SettingItem(label, false);
-            item.connect('toggled', (_item, active) => {
-                if (this._rendering)
-                    return;
-                const detail = {flag: id, value: active};
-                const started = this._engine.runAction('set', setArguments(id, active), detail);
-                // Refused while another action runs: the switch goes back to what the model says.
-                if (!started)
-                    this._render(this._engine.model);
-            });
-            this._settingItems[id] = item;
-            this._settingsMenu.menu.addMenuItem(item);
+            this._settingItems[id] = this._settingItem(id, label);
+            this._settingsMenu.menu.addMenuItem(this._settingItems[id]);
         }
         menu.addMenuItem(this._settingsMenu);
 
@@ -346,6 +362,68 @@ export default class TailtrayExtension extends Extension {
         this._preferencesItem = new PopupMenu.PopupMenuItem('Preferences');
         this._preferencesItem.connect('activate', () => this.openPreferences());
         menu.addMenuItem(this._preferencesItem);
+    }
+
+    /** A switch row of a preference: toggling it runs `tailscale set --<id>=<value>`. */
+    _settingItem(id, label) {
+        const item = new SettingItem(label, false);
+        item.connect('toggled', (_item, active) => {
+            if (this._rendering)
+                return;
+            const detail = {flag: id, value: active};
+            const started = this._engine.runAction('set', setArguments(id, active), detail);
+            // Refused while another action runs: the switch goes back to what the model says.
+            if (!started)
+                this._render(this._engine.model);
+        });
+        return item;
+    }
+
+    /**
+     * The Exit node submenu: None, one row per exit node (added and kept by peer ID as the
+     * statuses come in), then Allow LAN access. It scrolls past SUBMENU_HEIGHT.
+     */
+    _buildExitNodeMenu() {
+        this._exitMenu = new PopupMenu.PopupSubMenuMenuItem('Exit node');
+        this._exitSummary = addSubmenuValue(this._exitMenu);
+        const menu = this._exitMenu.menu;
+        menu.actor.style = `max-height: ${SUBMENU_HEIGHT - SUBMENU_CHROME}px;`;
+        menu.actor.vscrollbar_policy = St.PolicyType.AUTOMATIC;
+
+        this._exitNone = this._exitNodeItem('None');
+        this._exitNone.onActivate(() => {
+            if (!this._exitNone.exitChecked)
+                this._engine.runAction('exit', exitNodeArguments(''), {target: ''});
+        });
+        menu.addMenuItem(this._exitNone);
+        this._exitItems = new Map();
+        this._lanItem = this._settingItem(LAN_ACCESS.id, LAN_ACCESS.label);
+        menu.addMenuItem(this._lanItem);
+    }
+
+    /** An exit node row: check mark, dot, name, offline badge, and progress. */
+    _exitNodeItem(name, hasDot = false) {
+        const item = new KeepOpenMenuItem();
+        item.dot = null;
+        if (hasDot) {
+            item.dot = new St.Widget({y_align: Clutter.ActorAlign.CENTER});
+            item.add_child(item.dot);
+        }
+        item.nameLabel = new St.Label({text: name, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        item.add_child(item.nameLabel);
+        item.badge = new St.Label({
+            text: 'offline',
+            visible: false,
+            opacity: DIM_OPACITY,
+            y_align: Clutter.ActorAlign.CENTER,
+            style: 'font-size: 0.8em; padding: 1px 7px; border-radius: 8px; ' +
+                'background-color: rgba(128, 128, 128, 0.3);',
+        });
+        item.add_child(item.badge);
+        item.progressLabel = dimLabel('', {visible: false});
+        item.add_child(item.progressLabel);
+        item.exitChecked = false;
+        return item;
     }
 
     /** A row that shows a value with a copy icon; activating it copies the value. */
@@ -429,6 +507,7 @@ export default class TailtrayExtension extends Extension {
         // The profiles are listed once the first refresh answered, as the engine does.
         const accountShown = sections.account && model.loaded;
         this._renderAccount(model, accountShown);
+        this._renderExitNode(model, sections.exitNode);
         this._renderSettings(model, sections.settings);
 
         const separators = separatorsOf({
@@ -507,6 +586,72 @@ export default class TailtrayExtension extends Extension {
         return item;
     }
 
+    _renderExitNode(model, shown) {
+        const menu = this._exitMenu.menu;
+        this._exitMenu.visible = shown;
+        if (!shown)
+            menu.close(false);
+        const rows = exitNodeRows(model.status, model.pending);
+        this._exitSummary.text = rows.summary;
+        this._exitMenu.setSensitive(rows.available);
+        if (!rows.available)
+            menu.close(false);
+        this._updateExitItem(this._exitNone, null, rows.none);
+
+        // Rows are kept by peer ID: a refresh updates them in place, so an open submenu, and the
+        // scroll position, stay as they are.
+        const wanted = new Set(rows.nodes.map(row => row.id));
+        for (const [id, item] of this._exitItems) {
+            if (!wanted.has(id)) {
+                item.destroy();
+                this._exitItems.delete(id);
+            }
+        }
+        rows.nodes.forEach((row, index) => {
+            let item = this._exitItems.get(row.id);
+            if (!item) {
+                item = this._exitNodeItem(row.name, true);
+                item.exitId = row.id;
+                item.onActivate(() => {
+                    if (!item.exitChecked)
+                        this._engine.runAction('exit', exitNodeArguments(item.exitAddress), {target: item.exitId});
+                });
+                this._exitItems.set(row.id, item);
+                menu.addMenuItem(item, index + 1);
+            }
+            this._updateExitItem(item, JSON.stringify([row.name, row.online, this._dark]), row);
+        });
+        // Only a change of order moves rows.
+        const current = menu._getMenuItems();
+        const order = [this._exitNone, ...rows.nodes.map(row => this._exitItems.get(row.id)), this._lanItem];
+        if (current.some((item, index) => item !== order[index]))
+            order.forEach((item, index) => menu.moveMenuItem(item, index));
+
+        this._rendering = true;
+        const lan = switchRow(model.prefs, model.pending, LAN_ACCESS);
+        this._lanItem.setToggleState(lan.value);
+        this._lanItem.setSensitive(lan.sensitive);
+        this._rendering = false;
+    }
+
+    // Brings a row up to date with its model. `look` keys the name, dot, and badge of a node row,
+    // which are redrawn only when it changes; None has none of them.
+    _updateExitItem(item, look, row) {
+        item.exitChecked = row.checked;
+        item.exitAddress = row.address;
+        item.setOrnament(row.checked ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+        item.setSensitive(row.sensitive);
+        item.progressLabel.text = row.progress;
+        item.progressLabel.visible = row.progress !== '';
+        if (!item.dot || look === item.exitLook)
+            return;
+        item.exitLook = look;
+        item.nameLabel.text = row.name;
+        item.badge.visible = !row.online;
+        item.dot.style = 'width: 8px; height: 8px; border-radius: 4px; margin-right: 8px; ' +
+            `background-color: ${this._palette[row.online ? 'online' : 'offline']};`;
+    }
+
     _renderSettings(model, shown) {
         this._settingsMenu.visible = shown;
         if (!shown)
@@ -522,8 +667,8 @@ export default class TailtrayExtension extends Extension {
     }
 
     _renderPanel(model, headerLabel) {
-        const icon = panelIconModel(model.state, headerLabel);
-        const file = icon.glyph === 'filled' ? 'tailtray-symbolic.svg' : 'tailtray-outline-symbolic.svg';
+        const icon = panelIconModel(model.state, headerLabel, exitNodeInUse(model.status) !== null);
+        const file = GLYPH_FILES[icon.glyph];
         this._icon.gicon = Gio.FileIcon.new(this.dir.get_child(file));
         this._icon.opacity = icon.dimmed ? OUTLINE_DIM_OPACITY : 255;
         this._badge.visible = icon.badge !== null;

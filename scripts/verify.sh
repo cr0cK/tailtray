@@ -600,6 +600,204 @@ check "get is not called in Connecting" test "$(fake_count get)" = "$gets"
 show running connected
 check "get is called again in Connected" test "$(fake_count get)" -gt "$gets"
 
+# --- Exit node --------------------------------------------------------------------------------
+# Exit node rows are keyed by peer ID: nPEER000000001 is nas (online), ...03 paris-vps (online),
+# ...04 tokyo-vps (offline), ...05 oslo-vps (offline, in use; tests/fixtures/status-exit-node.json).
+exit_item() { echo "$HL_EXT._exitItems.get('nPEER0000000$1')"; }
+# The check marks (PopupMenu.Ornament.CHECK is 2) of None and of the listed nodes, in order.
+exit_checks() {
+    shell_eval "[$HL_EXT._exitNone, ...[...$HL_EXT._exitItems.values()]].map(item => item._ornament).join()"
+}
+panel_glyph() { shell_eval "$HL_EXT._icon.gicon.get_file().get_basename()"; }
+# Replaces the status of the fake by the Running fixture with the Python edit given as $1 (it
+# changes `d`) applied, and waits for the refresh to show it.
+edit_status() {
+    python3 - "$TAILTRAY_FAKE_DIR/status.json" "$1" <<'PY'
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+exec(sys.argv[2])
+open(path, 'w').write(json.dumps(d))
+PY
+}
+
+begin "Exit node: online, offline and checked offline rows; choosing, None, the checked row, LAN"
+fake_state exit-node
+refresh_now
+wait_model "m.status.Peer['nodekey:eeee'] !== undefined"
+menu_open
+check "the row names the exit node in use" test "$(shell_eval "$HL_EXT._exitSummary.text")" = oslo-vps
+check "the panel icon has the exit node badge, the node being offline" \
+    test "$(panel_glyph)" = tailtray-exit-symbolic.svg
+panel_shot "$SHOTS/panel-exit-node-offline.png"
+open_submenu _exitMenu
+check "the nodes are sorted by name, then Allow LAN access" \
+    test "$(shell_eval "$HL_EXT._exitMenu.menu._getMenuItems().map(item => item.label?.text ?? item.nameLabel?.text).join()")" = \
+    "None,nas,oslo-vps,paris-vps,tokyo-vps,Allow LAN access"
+check "the node in use is checked, None is not" test "$(exit_checks)" = "0,0,2,0,0"
+check "the offline node not in use is the only insensitive row" \
+    test "$(shell_eval "[...$HL_EXT._exitItems.values()].map(item => item.reactive).join()")" = "true,true,true,false"
+check "the offline nodes show the offline badge" \
+    test "$(shell_eval "[...$HL_EXT._exitItems.values()].map(item => item.badge.visible).join()")" = "false,true,false,true"
+check "Allow LAN access shows the value of get" test "$(shell_eval "$HL_EXT._lanItem.state")" = false
+menu_shot "$SHOTS/menu-exit-node.png"
+
+shell_eval "$(exit_item 04).activate(null); 'ok'" >/dev/null
+sleep 0.4
+check "an insensitive offline node calls nothing" test "$(action_calls)" = ""
+pointer_click "$(exit_item 03)"
+wait_model "m.pending === null" 10
+check "choosing a node calls set --exit-node=<IPv4>" test "$(action_calls)" = "set set --exit-node=100.64.0.4,"
+check "the menu and the submenu stay open" \
+    test "$(shell_eval "[$HL_EXT._indicator.menu.isOpen, $HL_EXT._exitMenu.menu.isOpen].join()")" = "true,true"
+check "the chosen node is checked, with the row naming it" \
+    test "$(exit_checks)|$(shell_eval "$HL_EXT._exitSummary.text")" = "0,0,0,2,0|paris-vps"
+check "the badge stays while the node is online" test "$(panel_glyph)" = tailtray-exit-symbolic.svg
+shell_eval "$(exit_item 03).activate(null); 'ok'" >/dev/null
+sleep 0.4
+check "activating the checked row calls nothing" test "$(action_calls)" = "set set --exit-node=100.64.0.4,"
+shell_eval "$HL_EXT._exitNone.activate(null); 'ok'" >/dev/null
+wait_model "m.pending === null" 10
+check "None calls set --exit-node=" \
+    test "$(action_calls)" = "set set --exit-node=100.64.0.4,set set --exit-node=,"
+check "None is checked and named" \
+    test "$(exit_checks)|$(shell_eval "$HL_EXT._exitSummary.text")" = "2,0,0,0,0|None"
+check "the badge goes with the exit node" test "$(panel_glyph)" = tailtray-symbolic.svg
+shell_eval "$HL_EXT._exitNone.activate(null); 'ok'" >/dev/null
+sleep 0.4
+check "activating the checked None calls nothing" test "$(fake_calls | awk '$1=="set"' | wc -l)" = 2
+pointer_click "$HL_EXT._lanItem"
+wait_model "m.pending === null" 10
+check "Allow LAN access calls set --exit-node-allow-lan-access=true" \
+    test "$(fake_calls | awk '$1=="set"' | tail -1)" = "set set --exit-node-allow-lan-access=true"
+check "its switch shows what get returns" test "$(shell_eval "$HL_EXT._lanItem.state")" = true
+shell_eval "$HL_EXT._lanItem.activate(null); 'ok'" >/dev/null
+wait_model "m.pending === null" 10
+check "and toggles back with false" \
+    test "$(fake_calls | awk '$1=="set"' | tail -1)" = "set set --exit-node-allow-lan-access=false"
+menu_close
+
+begin "Exit node: the badge stays when the node in use goes offline"
+fake_state exit-node
+edit_status "d['Peer']['nodekey:eeee']['Online'] = True"
+refresh_now
+wait_model "m.status.Peer['nodekey:eeee'].Online === true"
+check "online and in use: badge" test "$(panel_glyph)" = tailtray-exit-symbolic.svg
+edit_status "d['Peer']['nodekey:eeee']['Online'] = False"
+refresh_now
+wait_model "m.status.Peer['nodekey:eeee'].Online === false"
+menu_open
+open_submenu _exitMenu
+check "offline and in use: still checked, with the offline badge, still sensitive" \
+    test "$(shell_eval "[$(exit_item 05)._ornament, $(exit_item 05).badge.visible, $(exit_item 05).reactive].join()")" = "2,true,true"
+check "offline and in use: still the badge on the icon" test "$(panel_glyph)" = tailtray-exit-symbolic.svg
+menu_close
+
+begin "Exit node: the chosen row shows Setting… while a slow set runs, everything else is locked"
+fake_state exit-node
+refresh_now
+wait_model "m.status.Peer['nodekey:eeee'] !== undefined"
+fake_set set.sleep 3
+menu_open
+open_submenu _exitMenu
+shell_eval "$(exit_item 03).activate(null); 'ok'" >/dev/null
+sleep 1
+check "the chosen node shows Setting…" \
+    test "$(shell_eval "$(exit_item 03).progressLabel.text + '|' + $(exit_item 03).progressLabel.visible")" = "Setting…|true"
+check "no other row shows it" \
+    test "$(shell_eval "[$HL_EXT._exitNone, $(exit_item 01), $(exit_item 05)].map(item => item.progressLabel.visible).join()")" = "false,false,false"
+check "every row and the LAN switch are insensitive" \
+    test "$(shell_eval "[$HL_EXT._exitNone, ...$HL_EXT._exitItems.values(), $HL_EXT._lanItem].every(item => !item.reactive)")" = true
+check "so are the Settings switches" \
+    test "$(shell_eval "Object.values($HL_EXT._settingItems).every(item => !item.reactive)")" = true
+shell_eval "$(exit_item 01).activate(null); $HL_EXT._exitNone.activate(null); 'ok'" >/dev/null
+menu_shot "$SHOTS/menu-exit-node-setting.png"
+wait_model "m.pending === null" 10
+check "no second command reached the fake" test "$(action_calls)" = "set set --exit-node=100.64.0.4,"
+shell_eval "$HL_EXT._exitNone.activate(null); 'ok'" >/dev/null
+sleep 1
+check "None shows Setting… on its own row" \
+    test "$(shell_eval "[$HL_EXT._exitNone.progressLabel.text, $HL_EXT._exitNone.progressLabel.visible, $(exit_item 03).progressLabel.visible].join()")" = "Setting…,true,false"
+wait_model "m.pending === null" 10
+menu_close
+
+begin "Exit node: None available with no option and none in use"
+edit_status "
+for peer in d['Peer'].values():
+    peer['ExitNodeOption'] = False"
+refresh_now
+wait_model "m.status.Peer['nodekey:aaaa'].ExitNodeOption === false"
+menu_open
+check "the row reads None available and is insensitive" \
+    test "$(shell_eval "$HL_EXT._exitSummary.text + '|' + $HL_EXT._exitMenu.reactive")" = "None available|false"
+menu_shot "$SHOTS/menu-exit-node-none-available.png"
+menu_close
+
+begin "Exit node: 300 nodes scroll within 280 px, and a refresh updates the rows in place"
+python3 - "$TAILTRAY_FAKE_DIR/status.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+for i in range(300):
+    d['Peer']['nodekey:n%03d' % i] = {
+        'ID': 'nBULK%03d' % i, 'HostName': 'exit-%03d' % i, 'DNSName': 'exit-%03d.tail1234.ts.net.' % i,
+        'OS': 'linux', 'TailscaleIPs': ['100.65.%d.%d' % (i // 250, i % 250 + 1)], 'Online': i % 3 != 0,
+        'ExitNode': False, 'ExitNodeOption': True,
+    }
+open(path, 'w').write(json.dumps(d))
+PY
+refresh_now
+wait_model "Object.keys(m.status.Peer).length > 300"
+menu_open
+open_submenu _exitMenu
+SCROLL="$HL_EXT._exitMenu.menu.actor"
+check "the submenu lists the 300 nodes and nas" test "$(shell_eval "$HL_EXT._exitItems.size")" = 301
+# The headless screen is only 800 px high, so the main menu may squeeze the submenu below its
+# natural height: the natural height is what the 280 px cap limits.
+check "the submenu is at most 280 px high" \
+    test "$(shell_eval "$SCROLL.get_preferred_height(-1)[1]")" = 280
+check "its rows are far taller than that, so they scroll" \
+    test "$(shell_eval "$SCROLL.vadjustment.upper > 10 * $SCROLL.vadjustment.page_size")" = true
+menu_shot "$SHOTS/menu-exit-node-300-top.png"
+# A real wheel turn over the rows, not a write to the adjustment.
+read -r sx sy <<<"$(shell_eval "(([x, y], [w, h]) => [x + w / 2, y + h / 2].join(' '))($SCROLL.get_transformed_position(), $SCROLL.get_transformed_size())")"
+shell_eval "globalThis.__pointer.notify_absolute_motion(GLib.get_monotonic_time(), $sx, $sy); 'ok'" >/dev/null
+sleep 0.4
+before=$(shell_eval "Math.round($SCROLL.vadjustment.value)")
+for _ in 1 2 3 4 5; do
+    shell_eval "globalThis.__pointer.notify_discrete_scroll(GLib.get_monotonic_time(),
+        Clutter.ScrollDirection.DOWN, Clutter.ScrollSource.WHEEL); 'ok'" >/dev/null
+    sleep 0.2
+done
+sleep 0.5
+check "the mouse wheel scrolls the rows" test "$(shell_eval "$SCROLL.vadjustment.value > $before + 50")" = true
+shell_eval "$SCROLL.vadjustment.value = 1000; 'ok'" >/dev/null
+sleep 0.5
+check "scrolling to a row moves the rows there" test "$(shell_eval "Math.round($SCROLL.vadjustment.value)")" = 1000
+menu_shot "$SHOTS/menu-exit-node-300-scrolled.png"
+shell_eval "globalThis.__row = $HL_EXT._exitItems.get('nBULK150'); globalThis.__none = $HL_EXT._exitNone; 'ok'" >/dev/null
+edit_status "
+d['Peer']['nodekey:n150']['Online'] = False
+d['Peer']['nodekey:n150']['ExitNode'] = True
+del d['Peer']['nodekey:n299']
+d['Peer']['nodekey:new'] = dict(d['Peer']['nodekey:n001'], ID='nBULKNEW', HostName='exit-new', DNSName='exit-new.tail1234.ts.net.')"
+refresh_now
+wait_model "m.status.Peer['nodekey:n150'].ExitNode === true"
+sleep 0.5
+check "the row of a peer is the same object after a refresh" \
+    test "$(shell_eval "$HL_EXT._exitItems.get('nBULK150') === globalThis.__row && $HL_EXT._exitNone === globalThis.__none")" = true
+check "which now shows the offline badge and the check mark" \
+    test "$(shell_eval "[globalThis.__row.badge.visible, globalThis.__row._ornament].join()")" = "true,2"
+check "a vanished peer lost its row and a new one has one" \
+    test "$(shell_eval "[$HL_EXT._exitItems.has('nBULK299'), $HL_EXT._exitItems.has('nBULKNEW'), $HL_EXT._exitItems.size].join()")" = "false,true,301"
+check "the submenu is still open and still scrolled" \
+    test "$(shell_eval "[$HL_EXT._exitMenu.menu.isOpen, Math.round($SCROLL.vadjustment.value)].join()")" = "true,1000"
+check "the row summary follows" test "$(shell_eval "$HL_EXT._exitSummary.text")" = exit-150
+check "the order is by name, the new node after exit-299's place" \
+    test "$(shell_eval "$HL_EXT._exitMenu.menu._getMenuItems().slice(-4).map(item => item.nameLabel?.text ?? item.label.text).join()")" = \
+    "exit-298,exit-new,nas,Allow LAN access"
+menu_close
+
 # --- Reading the state ------------------------------------------------------------------------
 begin "Refresh rules"
 fake_set status.sleep 2

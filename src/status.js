@@ -95,13 +95,13 @@ export function headerModel(state, pending, loaded) {
 /**
  * The panel icon for a state: which glyph, whether it is dimmed, its badge colour, and its
  * accessible name, which carries the header label (`label`, the state's own unless an action
- * is pending).
+ * is pending). Connected through an exit node (`viaExitNode`) has its own glyph, with the arrow.
  */
-export function panelIconModel(state, label = state.label) {
+export function panelIconModel(state, label = state.label, viaExitNode = false) {
     const name = `Tailscale: ${label}`;
     switch (state.id) {
     case 'connected':
-        return {glyph: 'filled', dimmed: false, badge: null, name};
+        return {glyph: viaExitNode ? 'exit' : 'filled', dimmed: false, badge: null, name};
     case 'login':
     case 'approval':
         return {glyph: 'outline', dimmed: false, badge: 'warning', name};
@@ -122,6 +122,7 @@ export function sectionsOf(state) {
         warnings: id !== 'unavailable',
         thisDevice: id === 'connected',
         account: working,
+        exitNode: id === 'connected',
         settings: id === 'connected' || id === 'disconnected',
         loginHelp: id === 'login',
         approvalHelp: id === 'approval',

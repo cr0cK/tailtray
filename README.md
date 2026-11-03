@@ -15,6 +15,7 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
 <p align="center">
   <img src="docs/screenshots/menu-account.png" alt="The Account submenu expanded, listing two accounts with a check mark on the one in use" width="32%">
   <img src="docs/screenshots/menu-settings.png" alt="The Settings submenu expanded, with three switches" width="32%">
+  <img src="docs/screenshots/menu-exit-node.png" alt="The Exit node submenu expanded: None, an online node, an offline node in use with a check mark, an offline node, and Allow LAN access" width="32%">
 </p>
 
 ## Features
@@ -27,11 +28,13 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
 - Clear explanations when Tailscale is not installed, not running, or you are not the operator,
   with the command to fix it ready to copy.
 - An **Account** submenu to switch between the accounts you are already logged in to.
+- An **Exit node** submenu to route your traffic through one of the tailnet's exit nodes, or back to
+  none, with an **Allow LAN access** switch. The panel icon gets an arrow while one is in use.
 - A **Settings** submenu with three switches: use Tailscale subnets, use Tailscale DNS, and block
   incoming connections.
 - A preferences window with the refresh interval.
 
-Exit nodes, other devices, and notifications are coming in the next releases; see
+Other devices and notifications are coming in the next releases; see
 [`docs/specs/TRY.md`](docs/specs/TRY.md).
 
 ## Requirements
