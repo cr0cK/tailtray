@@ -124,17 +124,24 @@ export function sectionsOf(state) {
         account: working,
         exitNode: id === 'connected',
         settings: id === 'connected' || id === 'disconnected',
+        devices: id === 'connected',
         loginHelp: id === 'login',
         approvalHelp: id === 'approval',
     };
 }
 
 /**
- * Which separators of the menu show. `device` and `controls` tell whether This device and the
- * Account and Settings group have anything to show. The header group always shows, so a separator
- * follows it when a group does, one sits between the two groups, and one precedes the footer.
- * Two separators never touch, since a group sits between any two.
+ * Which separators of the menu show. `device`, `controls`, and `devices` tell whether This
+ * device, the Account, Exit node and Settings group, and Other devices have anything to show.
+ * The header group always shows, so a separator follows it when a group does, one sits between
+ * two groups that show, and one precedes the footer. Two separators never touch, since a group
+ * sits between any two.
  */
-export function separatorsOf({device, controls}) {
-    return {top: device || controls, device: device && controls, footer: true};
+export function separatorsOf({device, controls, devices = false}) {
+    return {
+        top: device || controls || devices,
+        device: device && (controls || devices),
+        controls: controls && devices,
+        footer: true,
+    };
 }

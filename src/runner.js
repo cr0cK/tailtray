@@ -9,7 +9,8 @@ const COMMAND = 'tailscale';
  * still running on destroy(). The command is found on PATH once, when the runner is created, which
  * is when the extension is enabled. run() never rejects: its result is {missing, timedOut,
  * exitCode, stdout, stderr}, where missing means `tailscale` was not on PATH and timedOut that
- * the time limit killed the process.
+ * the time limit killed the process. start() is run() with a handle, {result, kill()}, to kill
+ * the one command before its time limit.
  *
  * The environment variable TAILTRAY_TIMEOUT_SECONDS replaces every time limit; the headless
  * tests lower it to see a sleeping command killed.
@@ -24,12 +25,17 @@ export class CommandRunner {
     }
 
     run(args, timeoutSeconds) {
+        return this.start(args, timeoutSeconds).result;
+    }
+
+    start(args, timeoutSeconds) {
         const result = {missing: false, timedOut: false, exitCode: -1, stdout: '', stderr: ''};
+        const idle = {result: Promise.resolve(result), kill() {}};
         if (this._cancellable.is_cancelled())
-            return Promise.resolve(result);
+            return idle;
         if (this._executable === null) {
             result.missing = true;
-            return Promise.resolve(result);
+            return idle;
         }
 
         const launcher = new Gio.SubprocessLauncher({
@@ -42,7 +48,7 @@ export class CommandRunner {
             // The file went away since the extension was enabled.
             result.missing = error.matches(GLib.SpawnError, GLib.SpawnError.NOENT);
             result.stderr = error.message;
-            return Promise.resolve(result);
+            return idle;
         }
 
         const entry = {timeoutId: 0};
@@ -55,7 +61,7 @@ export class CommandRunner {
             return GLib.SOURCE_REMOVE;
         });
 
-        return new Promise(resolve => {
+        const promise = new Promise(resolve => {
             process.communicate_utf8_async(null, this._cancellable, (subprocess, asyncResult) => {
                 this._processes.delete(subprocess);
                 if (entry.timeoutId) {
@@ -73,6 +79,18 @@ export class CommandRunner {
                 resolve(result);
             });
         });
+        return {result: promise, kill: () => this._kill(process)};
+    }
+
+    // Kills one running command; its result is still delivered.
+    _kill(process) {
+        const entry = this._processes.get(process);
+        if (!entry)
+            return;
+        if (entry.timeoutId)
+            GLib.Source.remove(entry.timeoutId);
+        entry.timeoutId = 0;
+        process.force_exit();
     }
 
     /** Kills every running command; their results are still delivered, and callers ignore them. */

@@ -15,14 +15,15 @@ new `src/*.js` and `src/*.svg` files on its own.
 | `src/extension.js` | Panel icon, menu, copy and OSD; renders the engine's model |
 | `src/prefs.js` | Adwaita preferences window; every change applies at once |
 | `src/engine.js` | Refresh queue, action and follow-up rules, error decisions (pure; commands and timers injected) |
-| `src/runner.js` | `Gio.Subprocess` runner: argument arrays, time limits, kill on destroy |
+| `src/runner.js` | `Gio.Subprocess` runner: argument arrays, time limits, kill on destroy or per command |
 | `src/status.js` | Connection states, status parsing, header, panel icon and layout models (pure) |
 | `src/errors.js` | The error text table (pure) |
 | `src/accounts.js` | Profile rows of `switch --list --json` and the current tailnet (pure) |
 | `src/settings.js` | Switch values of `get --json` and the `set` arguments (pure) |
 | `src/exitnodes.js` | Exit node rows, the node in use, and the `set --exit-node` arguments (pure) |
 | `src/warnings.js` | Health and key expiry warnings (pure) |
-| `src/devices.js` | Device names, sorting, copyable rows (pure) |
+| `src/devices.js` | Device names, sorting, copyable rows, the Other devices list (pure) |
+| `src/ping.js` | `tailscale ping` arguments, result text, and the `Pinger` that runs and kills pings (pure; commands injected) |
 | `src/time.js` | Relative times (pure) |
 | `src/schemas/` | GSettings schema; settings live under `org.gnome.shell.extensions.tailtray` |
 | `tests/` | `node --test` suites for the pure modules; `tests/fixtures/` holds fictional CLI output |
@@ -104,6 +105,9 @@ devkit shows its own monitor, and the panel would land on an invisible one.
 - Menus follow the colour scheme (light by default in GNOME 49), so text colours come from
   `PALETTES` by `St.Settings.get().color_scheme`; a fixed pale yellow is unreadable on white.
 - Only one submenu of the main menu is open at a time: opening Settings closes Account.
+- Other devices are not submenus (GNOME Shell cannot nest them): rows live in an `St.ScrollView`
+  capped at 280 px by CSS `max-height`, inside a `PopupMenuSection`, and are kept by peer ID.
+  Pings are not actions: they go through `Pinger`, which kills them when the menu closes.
 - A row's `activate()` can be called on an insensitive row (Eval does, a stray keypress could):
   switch and keep-open rows ignore it unless `reactive`.
 - A switch animates for a moment after `setToggleState`: wait before a screenshot.

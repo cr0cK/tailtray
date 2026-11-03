@@ -7,10 +7,14 @@ Replies come from files in that directory:
   status.json, get.json, switch.json   what `status --json`, `get --json`, and
                                        `switch --list --json` print, as the files were when
                                        the command started
-  ping.out, ping.exit                  what `ping` prints and exits with (exit 0 by default)
+  ping.out, ping.exit                  what `ping` prints on stdout and exits with (exit 0 by default);
+                                       ping.err is what it prints on stderr
+  ping.<address>.out, .exit, .err, .sleep   the same for one address, the last argument, taking
+                                       the place of the files above
 Every call is appended to calls.log as one JSON line {t, key, args}, before it sleeps.
 Per command, KEY being status, get, switch-list, up, down, set, switch, or ping:
-  KEY.sleep   seconds to sleep before answering (a killed command never takes effect)
+  KEY.sleep   seconds to sleep before answering (a killed command never takes effect); for ping,
+              ping.<address>.sleep first
   KEY.fail    exit code to fail with after the sleep; KEY.stderr is what it prints (default
               "fake failure")
   KEY.stdout  printed instead of the usual reply, for garbage output
@@ -79,7 +83,16 @@ if key == 'unknown':
 
 # A read answers with the files as they were when it started, as a slow real command does.
 snapshot = {name: read(name) for name in ('status.json', 'get.json', 'switch.json')}
-sleep = read(key + '.sleep')
+# A ping answers per address when a file of that address exists, else from the shared files.
+ping_prefix = 'ping.%s' % args[-1] if key == 'ping' else None
+
+
+def ping_file(suffix):
+    value = read('%s.%s' % (ping_prefix, suffix))
+    return read('ping.%s' % suffix) if value is None else value
+
+
+sleep = ping_file('sleep') if key == 'ping' else read(key + '.sleep')
 if sleep:
     time.sleep(float(sleep))
 
@@ -98,8 +111,9 @@ elif key == 'get':
 elif key == 'switch-list':
     sys.stdout.write(snapshot['switch.json'] or '[]')
 elif key == 'ping':
-    sys.stdout.write(read('ping.out', ''))
-    sys.exit(int(read('ping.exit', '0')))
+    sys.stdout.write(ping_file('out') or '')
+    sys.stderr.write(ping_file('err') or '')
+    sys.exit(int((ping_file('exit') or '0').strip()))
 
 if read(key + '.noeffect') is not None:
     sys.exit(0)

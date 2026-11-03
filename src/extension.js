@@ -11,10 +11,11 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {accountRows, currentTailnet} from './accounts.js';
-import {deviceRows} from './devices.js';
+import {deviceList, deviceRows} from './devices.js';
 import {Engine} from './engine.js';
 import {ADMIN_CONSOLE_URL} from './errors.js';
 import {exitNodeArguments, exitNodeInUse, exitNodeRows} from './exitnodes.js';
+import {Pinger} from './ping.js';
 import {CommandRunner} from './runner.js';
 import {LAN_ACCESS, setArguments, settingRows, SETTINGS, switchRow} from './settings.js';
 import {headerModel, identityLine, panelIconModel, sectionsOf, separatorsOf} from './status.js';
@@ -30,6 +31,8 @@ const PALETTES = {
 // border and padding to the content's max-height, so the content stops 8 px short of it.
 const SUBMENU_HEIGHT = 280;
 const SUBMENU_CHROME = 8;
+// The Other devices list is at most 280 px high and scrolls past that.
+const DEVICES_HEIGHT = 280;
 const DIM_OPACITY = 170;
 const OUTLINE_DIM_OPACITY = 115;
 const GLYPH_FILES = {
@@ -37,6 +40,8 @@ const GLYPH_FILES = {
     exit: 'tailtray-exit-symbolic.svg',
     outline: 'tailtray-outline-symbolic.svg',
 };
+// The rows under an expanded device are indented like the rows of a submenu.
+const DEVICE_BODY_STYLE = 'padding-left: 2.2em;';
 const TITLE_STYLE = 'font-weight: bold;';
 
 /** Dims text with opacity: the Shell theme has no `dim-label` class. */
@@ -157,6 +162,11 @@ export default class TailtrayExtension extends Extension {
         this._schemeId = 0;
         this._dark = true;
         this._palette = PALETTES.dark;
+        this._openDevice = null;
+        this._pinger = new Pinger({
+            start: (args, timeoutSeconds) => this._runner.start(args, timeoutSeconds),
+            onChange: () => this._render(this._engine.model),
+        });
         this._engine = new Engine({
             run: (args, timeoutSeconds) => this._runner.run(args, timeoutSeconds),
             setTimer: (milliseconds, callback) => GLib.timeout_add(
@@ -188,10 +198,12 @@ export default class TailtrayExtension extends Extension {
             St.Settings.get().disconnect(this._schemeId);
         this._schemeId = 0;
         this._engine?.destroy();
+        this._pinger?.destroy();
         this._runner?.destroy();
         this._indicator?.destroy();
 
         this._engine = null;
+        this._pinger = null;
         this._runner = null;
         this._settings = null;
         this._indicator = null;
@@ -210,6 +222,13 @@ export default class TailtrayExtension extends Extension {
         this._warningsMenu = null;
         this._deviceCaption = null;
         this._deviceItems = null;
+        this._devicesCaption = null;
+        this._devicesCaptionLabel = null;
+        this._devicesList = null;
+        this._devicesScroll = null;
+        this._devicesSection = null;
+        this._deviceEntries = null;
+        this._openDevice = null;
         this._accountMenu = null;
         this._accountTailnet = null;
         this._accountKey = null;
@@ -254,6 +273,10 @@ export default class TailtrayExtension extends Extension {
                 this._engine.requestRefresh();
             } else {
                 this._engine.menuClosed();
+                // A ping result lives until the menu closes, and a ping still running is killed.
+                this._pinger.reset();
+                this._openDevice = null;
+                this._render(this._engine.model);
             }
         });
     }
@@ -315,6 +338,7 @@ export default class TailtrayExtension extends Extension {
         this._separators = {
             top: new PopupMenu.PopupSeparatorMenuItem(),
             device: new PopupMenu.PopupSeparatorMenuItem(),
+            controls: new PopupMenu.PopupSeparatorMenuItem(),
             footer: new PopupMenu.PopupSeparatorMenuItem(),
         };
         menu.addMenuItem(this._separators.top);
@@ -346,6 +370,9 @@ export default class TailtrayExtension extends Extension {
         }
         menu.addMenuItem(this._settingsMenu);
 
+        menu.addMenuItem(this._separators.controls);
+        this._buildDevices(menu);
+
         menu.addMenuItem(this._separators.footer);
 
         this._refreshItem = new KeepOpenMenuItem();
@@ -362,6 +389,143 @@ export default class TailtrayExtension extends Extension {
         this._preferencesItem = new PopupMenu.PopupMenuItem('Preferences');
         this._preferencesItem.connect('activate', () => this.openPreferences());
         menu.addMenuItem(this._preferencesItem);
+    }
+
+    /**
+     * The Other devices section: a caption, then a scrolling list of device rows, each of which
+     * expands in place. GNOME Shell cannot nest a submenu inside another, so the list lives in
+     * the main menu, in a scroll view of its own.
+     */
+    _buildDevices(menu) {
+        this._devicesCaption = staticItem();
+        this._devicesCaptionLabel = dimLabel('', {x_expand: true});
+        this._devicesCaption.add_child(this._devicesCaptionLabel);
+        menu.addMenuItem(this._devicesCaption);
+
+        this._devicesList = new PopupMenu.PopupMenuSection();
+        this._devicesScroll = new St.ScrollView({
+            style: `max-height: ${DEVICES_HEIGHT}px;`,
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+        });
+        this._devicesScroll.add_child(this._devicesList.actor);
+        this._devicesSection = new PopupMenu.PopupMenuSection();
+        this._devicesSection.actor.add_child(this._devicesScroll);
+        menu.addMenuItem(this._devicesSection);
+        this._deviceEntries = new Map();
+    }
+
+    /**
+     * A device: its row (dot, name, OS or last seen, arrow) and, under it while expanded, the
+     * copyable name and addresses and a Ping row.
+     */
+    _deviceEntry(id) {
+        const row = new KeepOpenMenuItem();
+        row.dot = new St.Widget({y_align: Clutter.ActorAlign.CENTER});
+        row.add_child(row.dot);
+        row.nameLabel = new St.Label({x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        row.add_child(row.nameLabel);
+        row.detailLabel = dimLabel('');
+        row.add_child(row.detailLabel);
+        row.arrow = new St.Icon({
+            icon_name: 'pan-end-symbolic',
+            style_class: 'popup-menu-icon',
+            style: 'margin-left: 8px;',
+        });
+        row.add_child(row.arrow);
+
+        const body = new PopupMenu.PopupMenuSection();
+        body.actor.visible = false;
+        const entry = {id, row, body, address: '', look: null, copy: {}};
+        for (const copyId of ['dns', 'ipv4', 'ipv6']) {
+            entry.copy[copyId] = this._copyRow('');
+            entry.copy[copyId].style = DEVICE_BODY_STYLE;
+            body.addMenuItem(entry.copy[copyId]);
+        }
+        entry.ping = new KeepOpenMenuItem();
+        entry.ping.style = DEVICE_BODY_STYLE;
+        entry.ping.add_child(new St.Label({text: 'Ping', x_expand: true, y_align: Clutter.ActorAlign.CENTER}));
+        entry.ping.resultLabel = dimLabel('', {visible: false});
+        entry.ping.add_child(entry.ping.resultLabel);
+        body.addMenuItem(entry.ping);
+
+        entry.section = new PopupMenu.PopupMenuSection();
+        entry.section.addMenuItem(row);
+        entry.section.addMenuItem(body);
+        // Expanding a device collapses the one that was open.
+        row.onActivate(() => {
+            this._openDevice = this._openDevice === id ? null : id;
+            this._renderDeviceOpen();
+        });
+        entry.ping.onActivate(() => this._pinger.ping(id, entry.address));
+        return entry;
+    }
+
+    _renderDeviceOpen() {
+        for (const entry of this._deviceEntries.values()) {
+            const open = entry.id === this._openDevice;
+            entry.body.actor.visible = open;
+            entry.row.arrow.icon_name = open ? 'pan-down-symbolic' : 'pan-end-symbolic';
+        }
+    }
+
+    _renderDevices(model, shown) {
+        const now = Date.now();
+        const list = shown ? deviceList(model.status, now) : {caption: '', devices: []};
+        this._devicesCaption.visible = shown;
+        this._devicesCaptionLabel.text = list.caption;
+        this._devicesSection.actor.visible = list.devices.length > 0;
+
+        // Devices are kept by ID, so a refresh updates them in place: an expanded device stays
+        // expanded and keeps its ping result, and the scroll position stays.
+        const wanted = new Set(list.devices.map(device => device.id));
+        for (const [id, entry] of this._deviceEntries) {
+            if (wanted.has(id))
+                continue;
+            this._pinger.forget(id);
+            entry.section.destroy();
+            this._deviceEntries.delete(id);
+            if (this._openDevice === id)
+                this._openDevice = null;
+        }
+        list.devices.forEach((device, index) => {
+            let entry = this._deviceEntries.get(device.id);
+            if (!entry) {
+                entry = this._deviceEntry(device.id);
+                this._deviceEntries.set(device.id, entry);
+                this._devicesList.addMenuItem(entry.section, index);
+            }
+            this._updateDevice(entry, device);
+        });
+        const current = this._devicesList._getMenuItems();
+        const order = list.devices.map(device => this._deviceEntries.get(device.id).section);
+        if (current.some((item, index) => item !== order[index]))
+            order.forEach((item, index) => this._devicesList.moveMenuItem(item, index));
+        this._renderDeviceOpen();
+    }
+
+    _updateDevice(entry, device) {
+        const {row} = entry;
+        const look = JSON.stringify([device.name, device.online, device.detail, this._dark]);
+        if (look !== entry.look) {
+            entry.look = look;
+            row.nameLabel.text = device.name;
+            row.nameLabel.opacity = device.online ? 255 : DIM_OPACITY;
+            row.detailLabel.text = device.detail;
+            row.dot.style = 'width: 8px; height: 8px; border-radius: 4px; margin-right: 8px; ' +
+                `background-color: ${this._palette[device.online ? 'online' : 'offline']};`;
+        }
+        const values = Object.fromEntries(device.rows.map(copy => [copy.id, copy.value]));
+        for (const [id, item] of Object.entries(entry.copy)) {
+            item.visible = id in values;
+            if (id in values)
+                item.valueLabel.text = values[id];
+        }
+        entry.address = device.address;
+        entry.ping.setSensitive(device.canPing);
+        const result = this._pinger.text(device.id);
+        entry.ping.resultLabel.text = result;
+        entry.ping.resultLabel.visible = result !== '';
     }
 
     /** A switch row of a preference: toggling it runs `tailscale set --<id>=<value>`. */
@@ -512,13 +676,16 @@ export default class TailtrayExtension extends Extension {
         this._renderAccount(model, accountShown);
         this._renderExitNode(model, sections.exitNode);
         this._renderSettings(model, sections.settings);
+        this._renderDevices(model, sections.devices);
 
         const separators = separatorsOf({
             device: rows.length > 0,
             controls: accountShown || sections.settings,
+            devices: sections.devices,
         });
         this._separators.top.visible = separators.top;
         this._separators.device.visible = separators.device;
+        this._separators.controls.visible = separators.controls;
         this._separators.footer.visible = separators.footer;
 
         const updated = model.updatedAt === null

@@ -17,7 +17,8 @@ mkdir -p "$OUT"
 headless_boot
 
 # Captures the whole screen with the menu open, with the submenu named by $2 (an extension
-# property such as _accountMenu) expanded when given, and widens MENU_LEFT and MENU_BOTTOM, the edges
+# property such as _accountMenu) expanded when given, then $3 (JavaScript) run and $4 (a
+# JavaScript condition) waited for when given, and widens MENU_LEFT and MENU_BOTTOM, the edges
 # that crop_menus later applies to every menu capture.
 MENU_LEFT=999999
 MENU_BOTTOM=0
@@ -30,6 +31,12 @@ capture_menu() {
         wait_model "!m.accounts.loading"
         shell_eval "$HL_EXT.$2.menu.open(false); 'ok'" >/dev/null
         sleep 1
+    fi
+    if [[ -n ${3:-} ]]; then
+        shell_eval "$3" >/dev/null
+        wait_for "${4:-true}" 10
+        pointer_park
+        sleep 0.5
     fi
     area=$(shell_eval "const a = $HL_EXT._indicator.menu.actor;
         const [x, y] = a.get_transformed_position(); const [, h] = a.get_transformed_size();
@@ -70,8 +77,18 @@ fake_state exit-node
 shell_eval "$HL_EXT._engine.requestRefresh()" >/dev/null
 wait_model "m.status.Peer['nodekey:eeee'] !== undefined"
 capture_menu menu-exit-node.png _exitMenu
+# The other devices (last seen times are relative to now), then one expanded with a ping result.
+fake_state running
+fake_devices
+fake_pong 1 home-router 192.0.2.10:41641 4ms
+shell_eval "$HL_EXT._engine.requestRefresh()" >/dev/null
+wait_model "m.status.Peer['nodekey:nDEV1'] !== undefined"
+capture_menu menu-devices.png
+DEVICE="$HL_EXT._deviceEntries.get('nDEV1')"
+capture_menu menu-devices-ping.png "" "$DEVICE.row.activate(null); $DEVICE.ping.activate(null); 'ok'" \
+    "$DEVICE.ping.resultLabel.text === 'direct · 4 ms'"
 crop_menus menu-connected.png menu-disconnected.png menu-login-required.png menu-account.png \
-    menu-settings.png menu-exit-node.png
+    menu-settings.png menu-exit-node.png menu-devices.png menu-devices-ping.png
 
 # Drop metadata such as creation time so unchanged screenshots stay byte-identical.
 for image in "$OUT"/*.png; do
