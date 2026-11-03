@@ -134,7 +134,7 @@ headless_boot() {
     # Eval and Screenshot refuse callers outside unsafe mode; this throwaway extension enables it.
     cat >"$extensions/unsafe@tailtray/metadata.json" <<'JSON'
 {"uuid": "unsafe@tailtray", "name": "Unsafe mode", "description": "Headless runs only",
- "shell-version": ["49"]}
+ "shell-version": ["49", "50"]}
 JSON
     cat >"$extensions/unsafe@tailtray/extension.js" <<'JS'
 export default class {

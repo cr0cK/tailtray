@@ -5,7 +5,7 @@ Thanks for helping improve Tailtray. By participating, you agree to follow the
 
 ## Development setup
 
-You need GNOME Shell 49, the Tailscale CLI (`tailscale`, only for a real run), GLib schema tools, Node.js 24, and
+You need GNOME Shell 49 or 50, the Tailscale CLI (`tailscale`, only for a real run), GLib schema tools, Node.js 24, and
 [pre-commit](https://pre-commit.com). Node.js is only used for development; the extension does
 not need it at runtime.
 
