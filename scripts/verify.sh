@@ -702,7 +702,8 @@ menu_open
 open_submenu _exitMenu
 shell_eval "$(exit_item 03).activate(null); 'ok'" >/dev/null
 sleep 1
-check "the chosen node shows Setting…" test "$(shell_eval "$(exit_item 03).progressLabel.text")" = "Setting…"
+check "the chosen node shows Setting…" \
+    test "$(shell_eval "$(exit_item 03).progressLabel.text + '|' + $(exit_item 03).progressLabel.visible")" = "Setting…|true"
 check "no other row shows it" \
     test "$(shell_eval "[$HL_EXT._exitNone, $(exit_item 01), $(exit_item 05)].map(item => item.progressLabel.visible).join()")" = "false,false,false"
 check "every row and the LAN switch are insensitive" \
@@ -716,7 +717,7 @@ check "no second command reached the fake" test "$(action_calls)" = "set set --e
 shell_eval "$HL_EXT._exitNone.activate(null); 'ok'" >/dev/null
 sleep 1
 check "None shows Setting… on its own row" \
-    test "$(shell_eval "$HL_EXT._exitNone.progressLabel.text + '|' + $(exit_item 03).progressLabel.visible")" = "Setting…|false"
+    test "$(shell_eval "[$HL_EXT._exitNone.progressLabel.text, $HL_EXT._exitNone.progressLabel.visible, $(exit_item 03).progressLabel.visible].join()")" = "Setting…,true,false"
 wait_model "m.pending === null" 10
 menu_close
 
@@ -758,9 +759,21 @@ check "the submenu is at most 280 px high" \
 check "its rows are far taller than that, so they scroll" \
     test "$(shell_eval "$SCROLL.vadjustment.upper > 10 * $SCROLL.vadjustment.page_size")" = true
 menu_shot "$SHOTS/menu-exit-node-300-top.png"
+# A real wheel turn over the rows, not a write to the adjustment.
+read -r sx sy <<<"$(shell_eval "(([x, y], [w, h]) => [x + w / 2, y + h / 2].join(' '))($SCROLL.get_transformed_position(), $SCROLL.get_transformed_size())")"
+shell_eval "globalThis.__pointer.notify_absolute_motion(GLib.get_monotonic_time(), $sx, $sy); 'ok'" >/dev/null
+sleep 0.4
+before=$(shell_eval "Math.round($SCROLL.vadjustment.value)")
+for _ in 1 2 3 4 5; do
+    shell_eval "globalThis.__pointer.notify_discrete_scroll(GLib.get_monotonic_time(),
+        Clutter.ScrollDirection.DOWN, Clutter.ScrollSource.WHEEL); 'ok'" >/dev/null
+    sleep 0.2
+done
+sleep 0.5
+check "the mouse wheel scrolls the rows" test "$(shell_eval "$SCROLL.vadjustment.value > $before + 50")" = true
 shell_eval "$SCROLL.vadjustment.value = 1000; 'ok'" >/dev/null
 sleep 0.5
-check "scrolling moves the rows" test "$(shell_eval "Math.round($SCROLL.vadjustment.value)")" = 1000
+check "scrolling to a row moves the rows there" test "$(shell_eval "Math.round($SCROLL.vadjustment.value)")" = 1000
 menu_shot "$SHOTS/menu-exit-node-300-scrolled.png"
 shell_eval "globalThis.__row = $HL_EXT._exitItems.get('nBULK150'); globalThis.__none = $HL_EXT._exitNone; 'ok'" >/dev/null
 edit_status "

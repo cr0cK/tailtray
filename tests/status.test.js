@@ -193,7 +193,8 @@ test('connected through an exit node has the arrow glyph, whatever the exit node
     assert.deepEqual(panelIconModel(STATES.connected, 'Connected', true), {
         glyph: 'exit', dimmed: false, badge: null, name: 'Tailscale: Connected',
     });
-    // The other states keep their own look: the exit node only matters while connected.
+    // The other states keep their own look, even with an exit node in use: the arrow is for
+    // Connected only.
     for (const id of ['connecting', 'disconnected', 'login', 'approval', 'unavailable'])
-        assert.equal(panelIconModel(STATES[id], undefined, false).glyph, 'outline');
+        assert.notEqual(panelIconModel(STATES[id], undefined, true).glyph, 'exit');
 });

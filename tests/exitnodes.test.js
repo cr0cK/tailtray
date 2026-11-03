@@ -33,6 +33,14 @@ test('only peers that are exit node options or in use are listed, sorted by name
     assert.deepEqual(names(rows), ['Berlin', 'paris', 'rome', 'tokyo']);
 });
 
+test('a peer with a Location (a Mullvad exit node) is listed like any other', () => {
+    const rows = exitNodeRows(statusOf(
+        peer('n1', 'de-ber-wg-001', {Location: {Country: 'Germany', City: 'Berlin'}}),
+        peer('n2', 'paris')
+    ), null);
+    assert.deepEqual(names(rows), ['de-ber-wg-001', 'paris']);
+});
+
 test('the fixture lists its one exit node option and leaves the phone out', () => {
     const rows = exitNodeRows(RUNNING, null);
     assert.deepEqual(names(rows), ['nas']);
