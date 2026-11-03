@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/cr0cK/tailtray/compare/v0.1.0...v0.1.1) (2026-11-03)
+
+
+### Fixed
+
+* support GNOME Shell 50 ([#14](https://github.com/cr0cK/tailtray/issues/14)) ([e50fb1e](https://github.com/cr0cK/tailtray/commit/e50fb1e683fea287466b965b0248daf7caac962f))
+
 ## 0.1.0 (2026-11-03)
 
 
