@@ -13,12 +13,13 @@ SRV shows, in the Tailtray menu, what this device shares with Tailscale Serve an
 per shared URL or TCP port with its local target, a **Public** mark on what Funnel opens to the
 internet, copying a share's URL, and stopping a share. It builds on TRY, whose rules all still
 hold except these, which SRV replaces: Serve and Funnel leave TRY's Out of scope, Menu layout
-gains the Shared section between This device and the controls, and stopping a share joins the
-actions of TRY's Actions. Nothing outside the menu changes: the panel icon and the notifications
+gains the Shared section between This device and the controls, stopping a share joins the
+actions of TRY's Actions, and the whole menu gains the colors of Menu colors and a `Connection`
+caption over the controls. Nothing outside the menu changes: the panel icon and the notifications
 stay as TRY defines them.
 
-The mockup, [`mockups/SRV.html`](mockups/SRV.html), shows every state of the Shared section; open
-it in a browser. Where it and the rules disagree, the rules win.
+The mockup, [`mockups/SRV.html`](mockups/SRV.html), shows every state of the Shared section, in
+the colored menu; open it in a browser. Where it and the rules disagree, the rules win.
 
 ## Reading the shares
 
@@ -79,22 +80,24 @@ prints.
   six groups. The separator rule of Menu layout applies unchanged.
 - It shows in Connected only, when there is at least one share or the read failed. With a good
   read and no share, it is hidden.
-- A dim caption `Shared from this device`, then one row per share, in a scrolling area at most
-  280 pixels high.
-- A row shows, left to right: the label; a **Public** pill when the share is public; the target,
-  dim, ellipsized at its end when it does not fit; a copy icon; and the stop button when the share
-  has one.
+- A caption `Shared from this device`, then one row per share, in a scrolling area at most 280
+  pixels high.
+- A row has two lines. Left of them, the share's tile (see Menu colors); right of them, a copy
+  icon and the stop button when the share has one, both centered on the row's height.
+  - The first line is the label, then a **Public** pill when the share is public.
+  - The second line, dim and smaller, is `→ <target>`, ellipsized at its end when it does not
+    fit. A share with no target has an empty second line.
 - Activating the row copies the share's URL, as TRY's Copying says.
-- The stop button is an icon button with the `media-playback-stop-symbolic` icon and the
-  accessible name `Stop sharing <URL>`. Activating it stops the share (see Stopping a share); it
+- The stop button is an icon button with the `media-playback-stop-symbolic` icon, in the error
+  color of Menu colors, and the accessible name `Stop sharing <URL>`. Activating it stops the share (see Stopping a share); it
   does not copy.
 - Only a background share whose host is this device's MagicDNS name, and whose port no other
   host of the background config serves, has a stop button. A foreground share has none: it ends
   with the command running in its terminal. A share of another host has none: the CLI only
   removes shares of this device's name. A share whose port another host also serves has none:
   removing its port's last handler also removes `TCP["<port>"]`, which the other host needs.
-- When the read failed, the caption is followed by one insensitive dim row, `Could not read what
-  this device shares`, and no other row.
+- When the read failed, the caption is followed by one insensitive dim row with a grey
+  `dialog-warning-symbolic` tile and `Could not read what this device shares`, and no other row.
 - A refresh while the menu is open updates the rows in place, as TRY's Reading the state says for
   the other sections.
 
@@ -117,7 +120,7 @@ prints.
 - A public share stops with the same command. Tailtray never runs `tailscale funnel`. For a Web
   share, Tailscale removes the Funnel of its port with the port's last handler; for a TCP share it
   leaves `AllowFunnel` in place, which shows nothing since the share is gone.
-- While it is pending, the row's target reads `Stopping…`. The follow-up renders the menu from its
+- While it is pending, the row's second line reads `Stopping…`, with no arrow. The follow-up renders the menu from its
   own reads, with every rule above: the row is gone when the stop worked and back to its target
   otherwise; the failure line replaces every row when its share read failed; the section is hidden
   when the state is no longer Connected.
@@ -128,6 +131,46 @@ prints.
   able to run 'sudo tailscale' to serve a path or Unix socket`. Tailtray shows it as any other
   error of TRY's Errors: its first line.
 - There is no confirmation: one activation stops the share.
+
+## Menu colors
+
+These rules apply to the whole menu, in every state, and in both the light and the dark Shell
+styles.
+
+- **Header**: in Connected, the header label is green. The other states keep TRY's colors: yellow
+  for Login required and Approval required, red for Unavailable, the regular text color otherwise.
+- **Captions**: the captions `This device`, `Shared from this device`, `Connection`, and
+  `Other devices` are bold, in the Shell's accent color. In the Other devices caption, only
+  `Other devices` takes it; ` · <online> of <total> online` stays dim.
+- **Connection caption**: the controls group (Account, Exit node, Settings) starts with the
+  caption `Connection`, shown whenever the group shows.
+- **Tiles**: these rows start with a tile, a 24-pixel square with rounded corners, filled with a
+  color, holding a white 14-pixel symbolic icon or a white bold character:
+
+| Row | Color | Content |
+|---|---|---|
+| This device: MagicDNS name | blue | `network-workgroup-symbolic` |
+| This device: IPv4 address | blue | `4` |
+| This device: IPv6 address | blue | `6` |
+| Share, background, not public, Web | teal | `send-to-symbolic` |
+| Share, public | orange | `web-browser-symbolic` |
+| Share, background, not public, TCP | brown | `network-wired-symbolic` |
+| Share, foreground, not public | grey | `utilities-terminal-symbolic` |
+| Shares failure line | grey | `dialog-warning-symbolic` |
+| Account | purple | `avatar-default-symbolic` |
+| Exit node | orange | `network-vpn-symbolic` |
+| Settings | slate | `preferences-system-symbolic` |
+| Refresh now | green | `view-refresh-symbolic` |
+| Preferences | grey | `preferences-other-symbolic` |
+
+- The colors are GNOME's palette: blue `#3584e4`, teal `#2190a4`, orange `#e66100`, brown
+  `#865e3c`, grey `#77767b`, purple `#9141ac`, slate `#6f8396`, green `#26a269`. The green of the
+  header label is `#33d17a` in the dark style and `#26a269` in the light one; the error color of
+  the stop button is `#ff7b63` in the dark style and `#c01c28` in the light one.
+- No other row gets a tile: the rows inside the Account and Exit node submenus, the Settings
+  switches, the device rows, which keep their dots, the error block, the warnings, and the Login
+  required and Approval required lines stay as TRY defines them.
+- An insensitive row dims its tile with the rest of the row.
 
 ## Security and privacy
 
@@ -150,7 +193,8 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 
 ### SRV-P1: Shared section
 
-**Scope**: every section of this spec.
+**Scope**: every section of this spec, Menu colors included, which changes every state of the
+menu, not only the Shared section.
 
 **Temporary restrictions**: none.
 
@@ -189,8 +233,12 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
   a device expanded, keeps the scroll position and the expanded device.
 - `npm run lint` and `make check` pass; CI is green; no `JS ERROR` or `JS WARNING` in the shell
   log.
-- `scripts/screenshots.sh` adds `docs/screenshots/menu-shared.png`, the README shows it, and
-  AGENTS.md's layout table lists `src/serve.js`.
+- Headless screenshots in Connected, Disconnected, Login required, and Unavailable, in the dark
+  and the light Shell styles, show every tile, caption, and header color of Menu colors, and a
+  share whose target is too long is ellipsized on its second line.
+- `scripts/screenshots.sh` regenerates every screenshot of `docs/screenshots/`, since Menu colors
+  changes all of them, and adds `docs/screenshots/menu-shared.png`; the README shows it, and
+  AGENTS.md's layout table lists `src/serve.js` and the two stylesheets.
 
 **Technical notes**
 - See TRY-P1 for the subprocess, menu, and headless notes.
@@ -216,5 +264,16 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
   50 the item reacts to presses through its own click gesture (`js/ui/popupMenu.js`), so a press
   on the button must neither reach the item's `activate`, which would copy and close the menu, nor
   be swallowed by the gesture; only the pointer test of the acceptance proves it.
+- **Styles**: the tiles, captions, and colors are style classes in two new stylesheets,
+  `src/stylesheet-dark.css` and `src/stylesheet-light.css`, not inline styles. GNOME Shell 49
+  loads the first of `stylesheet-<variant>.css` and `stylesheet.css` that exists, the variant
+  being `Main.getStyleVariant()`, and reloads it when the color scheme changes
+  (`js/ui/extensionSystem.js`, `_loadExtensionStylesheet`); only one is loaded, so each file is
+  complete. `gnome-extensions pack` only takes `stylesheet.css` on its own: add
+  `$(wildcard $(SRC)/stylesheet-*.css)` to `EXTRA_SOURCES` in the Makefile. The accent color is
+  `-st-accent-color` (GNOME 47 and later).
+- **Two-line rows**: TRY's Account submenu already shows two-line profile rows; reuse that
+  vertical `St.BoxLayout` of two `St.Label`s, with `ellipsize` set on the second one's
+  `clutter_text`.
 - **Public repository hygiene**: fixtures and screenshots use the fictional
   `workstation.tail1234.ts.net`, never a real tailnet.
