@@ -87,8 +87,15 @@ capture_menu menu-devices.png
 DEVICE="$HL_EXT._deviceEntries.get('nDEV1')"
 capture_menu menu-devices-ping.png "" "$DEVICE.row.activate(null); $DEVICE.ping.activate(null); 'ok'" \
     "$DEVICE.ping.resultLabel.text === 'direct · 4 ms'"
+# What this device shares: a public Web share, a Web share, a TCP share, and one started in a
+# terminal, with the two default peers.
+fake_state running
+fake_serve
+shell_eval "$HL_EXT._engine.requestRefresh()" >/dev/null
+wait_model "m.shares !== null && m.shares.ok && m.shares.shares.length === 4"
+capture_menu menu-shared.png
 crop_menus menu-connected.png menu-disconnected.png menu-login-required.png menu-account.png \
-    menu-settings.png menu-exit-node.png menu-devices.png menu-devices-ping.png
+    menu-settings.png menu-exit-node.png menu-devices.png menu-devices-ping.png menu-shared.png
 
 # Drop metadata such as creation time so unchanged screenshots stay byte-identical.
 for image in "$OUT"/*.png; do

@@ -25,12 +25,14 @@ new `src/*.js` and `src/*.svg` files on its own.
 | `src/notifications.js` | Which notifications a good refresh calls for, and the notified key expiries (pure) |
 | `src/notifier.js` | The Tailtray message source: sends them, withdraws Login required (GNOME Shell API) |
 | `src/devices.js` | Device names, sorting, copyable rows, the Other devices list (pure) |
+| `src/serve.js` | Serve and Funnel shares of `serve status --json`: URL, label, target, stop command, order, tiles, the Shared section model (pure) |
+| `src/stylesheet-dark.css`, `src/stylesheet-light.css` | Menu colors: tiles, captions, the Connected header, the stop button; the Shell loads the one for its style, so each is complete |
 | `src/ping.js` | `tailscale ping` arguments, result text, and the `Pinger` that runs and kills pings (pure; commands injected) |
 | `src/time.js` | Relative times (pure) |
 | `src/schemas/` | GSettings schema; settings live under `org.gnome.shell.extensions.tailtray` |
 | `tests/` | `node --test` suites for the pure modules; `tests/fixtures/` holds fictional CLI output |
 | `docs/specs/` | Product contracts (`TRY.md`) and their delivery process; `docs/specs/README.md` holds the project settings |
-| `scripts/fake-tailscale` | Stand-in CLI answering from fixture files, recording calls (see its header) |
+| `scripts/fake-tailscale` | Stand-in CLI answering from fixture files, recording calls; `serve ... off` edits `serve.json` as Tailscale does (see its header) |
 | `scripts/verify.sh` | Headless GNOME Shell scenarios against the fake; prints PASS or FAIL per check |
 | `scripts/screenshots.sh` | Regenerates `docs/screenshots/` from the fake |
 | `scripts/sandbox.sh` | Windowed, isolated GNOME Shell running the checkout; `--fake` uses the fake CLI |
@@ -113,6 +115,17 @@ devkit shows its own monitor, and the panel would land on an invisible one.
 - A row's `activate()` can be called on an insensitive row (Eval does, a stray keypress could):
   switch and keep-open rows ignore it unless `reactive`.
 - A switch animates for a moment after `setToggleState`: wait before a screenshot.
+- Setting `St.Label.text` to `undefined` (a model without the field) makes the whole extension
+  fail to load, with only a `Gjs-CRITICAL ... uncatchable exception` in the log and no `JS ERROR`:
+  give every fallback model all its fields.
+- Colors come from the stylesheets, not inline styles: the Shell loads the first of
+  `stylesheet-<dark|light>.css` and `stylesheet.css`, so each variant is complete, and a color
+  that must follow the style is a class. St has no `opacity` in CSS: dimming is the `opacity`
+  property, and a tile follows its row's `notify::sensitive` (`addTile`).
+- A tile or button inside a `PopupBaseMenuItem` keeps its own click: an `St.Button` child of a
+  row runs its `clicked` without reaching the row's `activate` (the stop button of a share).
+- Replacing the children of a row on every refresh shifts its layout: change a tile's icon and
+  text in place (`setTile`), as for the other kept rows.
 - The menu is built once in `_buildMenu()` from persistent items; refreshes update them in place
   and rebuild a section only when its content changed. Do not go back to `menu.removeAll()`:
   open submenus must survive a refresh.
@@ -126,8 +139,9 @@ devkit shows its own monitor, and the panel would land on an invisible one.
   that is down exits 1 with `failed to connect to local tailscaled`.
 - `tailscale` is looked up on `PATH` once, when the extension is enabled; the headless scripts
   change `PATH`, then reload the extension.
-- Each refresh runs `status --json`, then `get --json` when the backend is Running or Stopped; a
-  failing `get` leaves the switches insensitive and is not an error. `switch --list --json` is not
+- Each refresh runs `status --json`, then `get --json` when the backend is Running or Stopped, then
+  `serve status --json` when it is Running; a failing `get` leaves the switches insensitive, and a
+  failing `serve status` shows the Shared section's failure line, neither is an error. `switch --list --json` is not
   part of the refresh: the engine runs it when the Account section appears in an open menu and
   after a switch (`Engine._syncAccounts`), so the headless checks count it in `calls.log`.
 - `TAILTRAY_TIMEOUT_SECONDS` replaces every time limit; the headless tests lower it. It is read

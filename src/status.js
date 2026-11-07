@@ -61,7 +61,8 @@ export function identityLine(status) {
 /**
  * The header row for a state. A pending `tailscale up` or `down` replaces the label, and while
  * an action is pending, or before the first answer, the switch cannot be used. `switchOn` is
- * null when the state has no switch. `labelColor` is 'warning', 'error', or null.
+ * null when the state has no switch. `labelColor` is 'success' (Connected, whatever the label
+ * reads), 'warning', 'error', or null.
  */
 export function headerModel(state, pending, loaded) {
     let label = state.label;
@@ -79,7 +80,9 @@ export function headerModel(state, pending, loaded) {
     else if (pending?.kind === 'down')
         switchOn = false;
     let labelColor = null;
-    if (state.id === 'login' || state.id === 'approval')
+    if (state.id === 'connected')
+        labelColor = 'success';
+    else if (state.id === 'login' || state.id === 'approval')
         labelColor = 'warning';
     else if (state.id === 'unavailable')
         labelColor = 'error';
@@ -121,6 +124,7 @@ export function sectionsOf(state) {
         errorBlock: working || id === 'unavailable',
         warnings: id !== 'unavailable',
         thisDevice: id === 'connected',
+        shared: id === 'connected',
         account: working,
         exitNode: id === 'connected',
         settings: id === 'connected' || id === 'disconnected',
@@ -131,16 +135,17 @@ export function sectionsOf(state) {
 }
 
 /**
- * Which separators of the menu show. `device`, `controls`, and `devices` tell whether This
- * device, the Account, Exit node and Settings group, and Other devices have anything to show.
- * The header group always shows, so a separator follows it when a group does, one sits between
- * two groups that show, and one precedes the footer. Two separators never touch, since a group
- * sits between any two.
+ * Which separators of the menu show. `device`, `shared`, `controls`, and `devices` tell whether
+ * This device, Shared from this device, the Account, Exit node and Settings group, and Other
+ * devices have anything to show. The header group always shows, so a separator follows it when a
+ * group does, one sits between two groups that show, and one precedes the footer. Two separators
+ * never touch, since a group sits between any two.
  */
-export function separatorsOf({device, controls, devices = false}) {
+export function separatorsOf({device, shared = false, controls, devices = false}) {
     return {
-        top: device || controls || devices,
-        device: device && (controls || devices),
+        top: device || shared || controls || devices,
+        device: device && (shared || controls || devices),
+        shared: shared && (controls || devices),
         controls: controls && devices,
         footer: true,
     };

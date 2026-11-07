@@ -1,0 +1,84 @@
+/* Tailtray menu colours, for the light Shell style. GNOME Shell loads the first of
+ * stylesheet-<style>.css and stylesheet.css that exists, so each file is complete: keep
+ * stylesheet-dark.css and stylesheet-light.css in step: they differ only in the green of the
+ * header label, the Public pill, and the stop button. */
+
+/* Captions: bold, in the Shell's accent colour. */
+.tailtray-caption {
+  font-weight: bold;
+  font-size: 0.9em;
+  color: -st-accent-color;
+}
+
+/* The header label in Connected. */
+.tailtray-state-connected {
+  color: #26a269;
+}
+
+/* Tiles: a 24-pixel rounded square holding a white 14-pixel icon or a white bold character. */
+.tailtray-tile {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  border-radius: 6px;
+  margin-right: 10px;
+}
+.tailtray-tile-icon {
+  icon-size: 14px;
+  color: #ffffff;
+}
+.tailtray-tile-char {
+  font-size: 12px;
+  font-weight: bold;
+  color: #ffffff;
+}
+.tailtray-tile-blue { background-color: #3584e4; }
+.tailtray-tile-teal { background-color: #2190a4; }
+.tailtray-tile-orange { background-color: #e66100; }
+.tailtray-tile-brown { background-color: #865e3c; }
+.tailtray-tile-grey { background-color: #77767b; }
+.tailtray-tile-purple { background-color: #9141ac; }
+.tailtray-tile-slate { background-color: #6f8396; }
+.tailtray-tile-green { background-color: #26a269; }
+
+/* A share row: its two text lines sit in a column of fixed width, so the row's width never
+ * depends on its text. */
+.tailtray-share-text {
+  width: 22em;
+}
+.tailtray-share-label {
+  spacing: 8px;
+}
+.tailtray-share-target {
+  font-size: 0.85em;
+}
+.tailtray-pill {
+  font-size: 0.8em;
+  font-weight: bold;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: #9c6e03;
+  background-color: rgba(156, 110, 3, 0.15);
+}
+.tailtray-copy-icon {
+  margin-left: 8px;
+}
+
+/* The stop button of a share. */
+.tailtray-stop {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+  margin: 0 0 0 6px;
+  border-radius: 13px;
+  color: #c01c28;
+}
+.tailtray-stop:hover,
+.tailtray-stop:focus {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+.tailtray-stop-spacer {
+  width: 26px;
+  margin-left: 6px;
+}

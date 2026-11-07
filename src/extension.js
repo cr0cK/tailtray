@@ -18,6 +18,7 @@ import {exitNodeArguments, exitNodeInUse, exitNodeRows} from './exitnodes.js';
 import {Notifier} from './notifier.js';
 import {Pinger} from './ping.js';
 import {CommandRunner} from './runner.js';
+import {sharedSection} from './serve.js';
 import {LAN_ACCESS, setArguments, settingRows, SETTINGS, switchRow} from './settings.js';
 import {headerModel, identityLine, panelIconModel, sectionsOf, separatorsOf} from './status.js';
 import {relativeTime} from './time.js';
@@ -41,6 +42,8 @@ const GLYPH_FILES = {
     exit: 'tailtray-exit-symbolic.svg',
     outline: 'tailtray-outline-symbolic.svg',
 };
+// The Shared section scrolls past this many share rows.
+const SHARES_VISIBLE_ROWS = 4;
 // The rows under an expanded device are indented like the rows of a submenu.
 const DEVICE_BODY_STYLE = 'padding-left: 2.2em;';
 const TITLE_STYLE = 'font-weight: bold;';
@@ -67,15 +70,84 @@ function staticItem() {
 function copyIcon() {
     return new St.Icon({
         icon_name: 'edit-copy-symbolic',
-        style_class: 'popup-menu-icon',
+        style_class: 'popup-menu-icon tailtray-copy-icon',
         opacity: DIM_OPACITY,
     });
 }
 
-/** Shows the state label of the header in its colour, or dimmed when it has none. */
-function setStateText(label, text, color) {
+/** A caption: bold, in the Shell's accent colour (see the stylesheets). */
+function captionLabel(text) {
+    return new St.Label({text, style_class: 'tailtray-caption', y_align: Clutter.ActorAlign.CENTER});
+}
+
+/**
+ * A tile: a 24-pixel rounded square in a palette colour (`blue`, `teal`, ...) holding a white
+ * symbolic icon (`{icon}`) or a white bold character (`{char}`). The colours are style classes of
+ * the stylesheets.
+ */
+function makeTile(color, content) {
+    const tile = new St.BoxLayout({y_align: Clutter.ActorAlign.CENTER});
+    const centered = {
+        x_expand: true,
+        y_expand: true,
+        x_align: Clutter.ActorAlign.CENTER,
+        y_align: Clutter.ActorAlign.CENTER,
+    };
+    tile.tileIcon = new St.Icon({style_class: 'tailtray-tile-icon', ...centered});
+    tile.tileChar = new St.Label({style_class: 'tailtray-tile-char', ...centered});
+    tile.add_child(tile.tileIcon);
+    tile.add_child(tile.tileChar);
+    tile.tileColor = null;
+    setTile(tile, color, content);
+    return tile;
+}
+
+/** Changes the colour and the content of a tile. */
+function setTile(tile, color, {icon = null, char = null}) {
+    if (tile.tileColor !== color) {
+        if (tile.tileColor)
+            tile.remove_style_class_name(`tailtray-tile-${tile.tileColor}`);
+        tile.add_style_class_name('tailtray-tile');
+        tile.add_style_class_name(`tailtray-tile-${color}`);
+        tile.tileColor = color;
+    }
+    tile.tileIcon.visible = icon !== null;
+    tile.tileChar.visible = icon === null;
+    if (icon !== null)
+        tile.tileIcon.icon_name = icon;
+    else
+        tile.tileChar.text = char;
+}
+
+/**
+ * Puts a tile at the start of a menu item. An insensitive item dims its tile with the rest of
+ * the row, which a style class cannot do: the dimming follows the item's `sensitive` property.
+ */
+function addTile(item, color, content) {
+    const tile = makeTile(color, content);
+    item.tile = tile;
+    item.insert_child_above(tile, item._ornamentIcon);
+    const sync = () => {
+        tile.opacity = item.sensitive ? 255 : DIM_OPACITY;
+    };
+    item.connect('notify::sensitive', sync);
+    sync();
+    return tile;
+}
+
+/**
+ * Shows the state label of the header in its colour, or dimmed when it has none. `color` is
+ * 'success' (a stylesheet class), 'warning', 'error', or null; the last two come from `palette`.
+ */
+function setStateText(label, text, color, palette) {
     label.text = text;
-    label.style = `font-size: 0.9em;${color ? ` color: ${color};` : ''}`;
+    const success = color === 'success';
+    if (success)
+        label.add_style_class_name('tailtray-state-connected');
+    else
+        label.remove_style_class_name('tailtray-state-connected');
+    const inline = color && !success ? ` color: ${palette[color]};` : '';
+    label.style = `font-size: 0.9em;${inline}`;
     label.opacity = color ? 255 : DIM_OPACITY;
 }
 
@@ -120,6 +192,33 @@ const SettingItem = GObject.registerClass(
     });
 
 /**
+ * A share row. While an action is pending its stop button is insensitive, which makes it
+ * non-reactive, so a press on it would fall through to the row and copy the URL: the row ignores
+ * a pointer press that lands inside the stop button's allocation. `stopButton` is set by the code
+ * that builds the row.
+ */
+const ShareItem = GObject.registerClass(
+    class ShareItem extends PopupMenu.PopupBaseMenuItem {
+        activate(event) {
+            if (this.stopButton?.visible && this._onStopButton(event))
+                return;
+            super.activate(event);
+        }
+
+        _onStopButton(event) {
+            const type = event?.type();
+            const pointer = type === Clutter.EventType.BUTTON_PRESS ||
+                type === Clutter.EventType.BUTTON_RELEASE || type === Clutter.EventType.TOUCH_END;
+            if (!pointer)
+                return false;
+            const [x, y] = event.get_coords();
+            const [left, top] = this.stopButton.get_transformed_position();
+            const [width, height] = this.stopButton.get_transformed_size();
+            return x >= left && x < left + width && y >= top && y < top + height;
+        }
+    });
+
+/**
  * The header row with a switch: the title, the state label, and the switch. Activating the row
  * toggles the switch without closing the menu, which PopupSwitchMenuItem.activate() would do
  * through its parent. setToggleState() emits `toggled` like a click does, so callers wrap
@@ -139,13 +238,6 @@ const HeaderItem = GObject.registerClass(
         activate(_event) {
             if (this.reactive && this._switch.mapped)
                 this.toggle();
-        }
-
-        /** Shows the label in its colour, or dimmed when it has none. */
-        setStateText(text, color) {
-            this.stateLabel.text = text;
-            this.stateLabel.style = `font-size: 0.9em;${color ? ` color: ${color};` : ''}`;
-            this.stateLabel.opacity = color ? 255 : DIM_OPACITY;
         }
 
         setSwitchVisible(visible) {
@@ -221,6 +313,7 @@ export default class TailtrayExtension extends Extension {
         this._runner?.destroy();
         // The list is in the menu's actors but not among its items: destroy it by hand.
         this._devicesList?.destroy();
+        this._sharesList?.destroy();
         this._indicator?.destroy();
 
         this._pinger = null;
@@ -244,10 +337,18 @@ export default class TailtrayExtension extends Extension {
         this._deviceItems = null;
         this._devicesCaption = null;
         this._devicesCaptionLabel = null;
+        this._devicesCountLabel = null;
         this._devicesList = null;
         this._devicesScroll = null;
         this._devicesSection = null;
         this._deviceEntries = null;
+        this._sharedCaption = null;
+        this._sharesFailure = null;
+        this._sharesList = null;
+        this._sharesScroll = null;
+        this._sharesSection = null;
+        this._shareEntries = null;
+        this._connectionCaption = null;
         this._openDevice = null;
         this._accountMenu = null;
         this._accountTailnet = null;
@@ -354,35 +455,50 @@ export default class TailtrayExtension extends Extension {
         this._warningsMenu = new PopupMenu.PopupSubMenuMenuItem('Warnings');
         menu.addMenuItem(this._warningsMenu);
 
-        // Separators: after the top group, after This device, and before the footer.
+        // Separators: after the top group, after This device, after Shared, after the controls, and
+        // before the footer.
         this._separators = {
             top: new PopupMenu.PopupSeparatorMenuItem(),
             device: new PopupMenu.PopupSeparatorMenuItem(),
+            shared: new PopupMenu.PopupSeparatorMenuItem(),
             controls: new PopupMenu.PopupSeparatorMenuItem(),
             footer: new PopupMenu.PopupSeparatorMenuItem(),
         };
         menu.addMenuItem(this._separators.top);
 
-        this._deviceCaption = staticItem();
-        this._deviceCaption.add_child(dimLabel('This device', {x_expand: true}));
+        this._deviceCaption = this._captionItem('This device');
         menu.addMenuItem(this._deviceCaption);
         this._deviceItems = {};
+        const deviceTiles = {
+            dns: {icon: 'network-workgroup-symbolic'},
+            ipv4: {char: '4'},
+            ipv6: {char: '6'},
+        };
         for (const id of ['dns', 'ipv4', 'ipv6']) {
-            this._deviceItems[id] = this._copyRow('');
+            this._deviceItems[id] = this._copyRow('', false, {color: 'blue', ...deviceTiles[id]});
             menu.addMenuItem(this._deviceItems[id]);
         }
 
         menu.addMenuItem(this._separators.device);
 
+        this._buildShared(menu);
+        menu.addMenuItem(this._separators.shared);
+
+        this._connectionCaption = this._captionItem('Connection');
+        menu.addMenuItem(this._connectionCaption);
+
         this._accountMenu = new PopupMenu.PopupSubMenuMenuItem('Account');
+        addTile(this._accountMenu, 'purple', {icon: 'avatar-default-symbolic'});
         this._accountTailnet = addSubmenuValue(this._accountMenu);
         this._accountItems = new Map();
         menu.addMenuItem(this._accountMenu);
 
         this._buildExitNodeMenu();
+        addTile(this._exitMenu, 'orange', {icon: 'network-vpn-symbolic'});
         menu.addMenuItem(this._exitMenu);
 
         this._settingsMenu = new PopupMenu.PopupSubMenuMenuItem('Settings');
+        addTile(this._settingsMenu, 'slate', {icon: 'preferences-system-symbolic'});
         this._settingItems = {};
         for (const {id, label} of SETTINGS) {
             this._settingItems[id] = this._settingItem(id, label);
@@ -396,6 +512,7 @@ export default class TailtrayExtension extends Extension {
         menu.addMenuItem(this._separators.footer);
 
         this._refreshItem = new KeepOpenMenuItem();
+        addTile(this._refreshItem, 'green', {icon: 'view-refresh-symbolic'});
         this._refreshItem.add_child(new St.Label({
             text: 'Refresh now',
             x_expand: true,
@@ -407,8 +524,149 @@ export default class TailtrayExtension extends Extension {
         menu.addMenuItem(this._refreshItem);
 
         this._preferencesItem = new PopupMenu.PopupMenuItem('Preferences');
+        addTile(this._preferencesItem, 'grey', {icon: 'preferences-other-symbolic'});
         this._preferencesItem.connect('activate', () => this.openPreferences());
         menu.addMenuItem(this._preferencesItem);
+    }
+
+    /**
+     * The Shared section: a caption, then either the failure line or a scrolling list of share
+     * rows, at most four rows high. Like the device list, the rows live in the main menu, in a
+     * scroll view of their own, and are kept by share key.
+     */
+    _buildShared(menu) {
+        this._sharedCaption = this._captionItem('Shared from this device');
+        menu.addMenuItem(this._sharedCaption);
+
+        this._sharesFailure = new PopupMenu.PopupBaseMenuItem();
+        addTile(this._sharesFailure, 'grey', {icon: 'dialog-warning-symbolic'});
+        this._sharesFailure.add_child(dimLabel('Could not read what this device shares', {x_expand: true}));
+        this._sharesFailure.setSensitive(false);
+        menu.addMenuItem(this._sharesFailure);
+
+        this._sharesList = new PopupMenu.PopupMenuSection();
+        this._sharesScroll = new St.ScrollView({
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+        });
+        this._sharesScroll.add_child(this._sharesList.actor);
+        this._sharesSection = new PopupMenu.PopupMenuSection();
+        this._sharesSection.actor.add_child(this._sharesScroll);
+        menu.addMenuItem(this._sharesSection);
+        this._shareEntries = new Map();
+        this._sharesRowHeight = 0;
+    }
+
+    /**
+     * A share: its tile, two text lines (the label with the Public pill, and the target), the copy
+     * icon, and the stop button. Activating the row copies the share's URL. The stop button is a
+     * child of the row with a click gesture of its own: a press on it runs the stop and neither
+     * reaches the row's activation nor is swallowed (the pointer test of scripts/verify.sh); a
+     * press on it while it is insensitive does nothing (ShareItem).
+     */
+    _shareEntry(key) {
+        const row = new ShareItem();
+        const entry = {key, row, url: '', stopArgs: null};
+        addTile(row, 'teal', {icon: 'send-to-symbolic'});
+
+        const text = new St.BoxLayout({
+            vertical: true,
+            style_class: 'tailtray-share-text',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        const first = new St.BoxLayout({style_class: 'tailtray-share-label'});
+        entry.label = new St.Label({x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        entry.pill = new St.Label({
+            text: 'Public',
+            style_class: 'tailtray-pill',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        first.add_child(entry.label);
+        first.add_child(entry.pill);
+        entry.line = dimLabel('', {style_class: 'tailtray-share-target', y_align: Clutter.ActorAlign.START});
+        text.add_child(first);
+        text.add_child(entry.line);
+        row.add_child(text);
+        row.add_child(copyIcon());
+
+        entry.stop = new St.Button({
+            style_class: 'tailtray-stop',
+            can_focus: false,
+            y_align: Clutter.ActorAlign.CENTER,
+            child: new St.Icon({icon_name: 'media-playback-stop-symbolic', icon_size: 14}),
+        });
+        entry.spacer = new St.Widget({style_class: 'tailtray-stop-spacer'});
+        row.add_child(entry.stop);
+        row.add_child(entry.spacer);
+        row.stopButton = entry.stop;
+
+        row.connect('activate', () => this._copy(entry.url));
+        entry.stop.connect('clicked', () => {
+            if (entry.stop.reactive && entry.stopArgs)
+                this._engine.runAction('stop', entry.stopArgs, {key});
+        });
+        return entry;
+    }
+
+    _renderShared(model, shown) {
+        const section = shown ? sharedSection(model.shares, model.pending) : sharedSection(null, null);
+        this._sharedCaption.visible = section.shown;
+        this._sharesFailure.visible = section.failed;
+        this._sharesSection.actor.visible = section.rows.length > 0;
+
+        // Shares are kept by key, so a refresh updates them in place: the scroll position stays.
+        const wanted = new Set(section.rows.map(row => row.key));
+        for (const [key, entry] of this._shareEntries) {
+            if (wanted.has(key))
+                continue;
+            entry.row.destroy();
+            this._shareEntries.delete(key);
+        }
+        section.rows.forEach((row, index) => {
+            let entry = this._shareEntries.get(row.key);
+            if (!entry) {
+                entry = this._shareEntry(row.key);
+                this._shareEntries.set(row.key, entry);
+                this._sharesList.addMenuItem(entry.row, index);
+            }
+            this._updateShare(entry, row);
+        });
+        const current = this._sharesList._getMenuItems();
+        const order = section.rows.map(row => this._shareEntries.get(row.key).row);
+        if (current.some((item, index) => item !== order[index]))
+            order.forEach((item, index) => this._sharesList.moveMenuItem(item, index));
+        this._capSharesHeight();
+    }
+
+    _updateShare(entry, row) {
+        entry.url = row.url;
+        entry.stopArgs = row.stopArgs;
+        setTile(entry.row.tile, row.tile.color, {icon: row.tile.icon});
+        entry.label.text = row.label;
+        entry.pill.visible = row.public;
+        entry.line.text = row.line;
+        entry.stop.visible = row.canStop;
+        entry.spacer.visible = !row.canStop;
+        entry.stop.reactive = row.stopSensitive;
+        entry.stop.opacity = row.stopSensitive ? 255 : DIM_OPACITY;
+        entry.stop.accessible_name = row.stopName;
+    }
+
+    // The list is at most four share rows high. Every row has the same height, so it is
+    // measured on the first one.
+    _capSharesHeight() {
+        const first = this._sharesList._getMenuItems()[0];
+        if (!first)
+            return;
+        // The row's height is in stage pixels and a CSS length is scaled by the theme's scale
+        // factor, so the cap divides it out.
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        const [, height] = first.get_preferred_height(-1);
+        if (height <= 0 || height === this._sharesRowHeight)
+            return;
+        this._sharesRowHeight = height;
+        this._sharesScroll.style =
+            `max-height: ${Math.ceil(height / scale * SHARES_VISIBLE_ROWS)}px;`;
     }
 
     /**
@@ -417,9 +675,12 @@ export default class TailtrayExtension extends Extension {
      * the main menu, in a scroll view of its own.
      */
     _buildDevices(menu) {
+        // Only the title takes the accent colour; the count after it stays dim.
         this._devicesCaption = staticItem();
-        this._devicesCaptionLabel = dimLabel('', {x_expand: true});
+        this._devicesCaptionLabel = captionLabel('');
+        this._devicesCountLabel = dimLabel('', {style: 'font-size: 0.9em;'});
         this._devicesCaption.add_child(this._devicesCaptionLabel);
+        this._devicesCaption.add_child(this._devicesCountLabel);
         menu.addMenuItem(this._devicesCaption);
 
         this._devicesList = new PopupMenu.PopupMenuSection();
@@ -491,9 +752,10 @@ export default class TailtrayExtension extends Extension {
 
     _renderDevices(model, shown) {
         const now = Date.now();
-        const list = shown ? deviceList(model.status, now) : {caption: '', devices: []};
+        const list = shown ? deviceList(model.status, now) : {title: '', count: '', devices: []};
         this._devicesCaption.visible = shown;
-        this._devicesCaptionLabel.text = list.caption;
+        this._devicesCaptionLabel.text = list.title;
+        this._devicesCountLabel.text = list.count;
         this._devicesSection.actor.visible = list.devices.length > 0;
 
         // Devices are kept by ID, so a refresh updates them in place: an expanded device stays
@@ -613,9 +875,23 @@ export default class TailtrayExtension extends Extension {
         return item;
     }
 
-    /** A row that shows a value with a copy icon; activating it copies the value. */
-    _copyRow(value, monospace = false) {
+    /** A caption row: static text in the accent colour. */
+    _captionItem(text) {
+        const item = staticItem();
+        item.captionLabel = captionLabel(text);
+        item.captionLabel.x_expand = true;
+        item.add_child(item.captionLabel);
+        return item;
+    }
+
+    /**
+     * A row that shows a value with a copy icon; activating it copies the value. `tile` is
+     * `{color, icon}` or `{color, char}` for a row that starts with a tile.
+     */
+    _copyRow(value, monospace = false, tile = null) {
         const item = new PopupMenu.PopupBaseMenuItem();
+        if (tile)
+            addTile(item, tile.color, tile);
         item.valueLabel = new St.Label({
             text: value,
             x_expand: true,
@@ -690,6 +966,7 @@ export default class TailtrayExtension extends Extension {
                 item.valueLabel.text = shown[id];
         }
         this._deviceCaption.visible = rows.length > 0;
+        this._renderShared(model, sections.shared && model.shares !== null);
 
         // The profiles are listed once the first refresh answered, as the engine does.
         const accountShown = sections.account && model.loaded;
@@ -698,13 +975,17 @@ export default class TailtrayExtension extends Extension {
         this._renderSettings(model, sections.settings);
         this._renderDevices(model, sections.devices);
 
+        const controls = accountShown || sections.settings;
+        this._connectionCaption.visible = controls;
         const separators = separatorsOf({
             device: rows.length > 0,
-            controls: accountShown || sections.settings,
+            shared: this._sharedCaption.visible,
+            controls,
             devices: sections.devices,
         });
         this._separators.top.visible = separators.top;
         this._separators.device.visible = separators.device;
+        this._separators.shared.visible = separators.shared;
         this._separators.controls.visible = separators.controls;
         this._separators.footer.visible = separators.footer;
 
@@ -871,16 +1152,16 @@ export default class TailtrayExtension extends Extension {
     }
 
     _renderHeader(header) {
-        const color = header.labelColor ? this._palette[header.labelColor] : null;
+        const color = header.labelColor;
         const hasSwitch = header.switchOn !== null;
         this._header.visible = hasSwitch;
         this._staticHeader.visible = !hasSwitch;
-        setStateText(this._staticStateLabel, header.label, color);
+        setStateText(this._staticStateLabel, header.label, color, this._palette);
         if (!hasSwitch)
             return;
         // Updating the switch from a refresh must not look like the user's toggle.
         this._rendering = true;
-        setStateText(this._header.stateLabel, header.label, color);
+        setStateText(this._header.stateLabel, header.label, color, this._palette);
         this._header.setToggleState(header.switchOn);
         this._header.setSensitive(header.switchSensitive);
         this._header.accessible_name = `Tailscale: ${header.label}`;
