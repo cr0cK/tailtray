@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/cr0cK/tailtray/compare/v0.1.1...v0.2.0) (2026-11-07)
+
+
+### Added
+
+* show Serve and Funnel shares in the menu ([#19](https://github.com/cr0cK/tailtray/issues/19)) ([758ddb4](https://github.com/cr0cK/tailtray/commit/758ddb443a52b3c9317b709319093d8739055dbb))
+
 ## [0.1.1](https://github.com/cr0cK/tailtray/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
