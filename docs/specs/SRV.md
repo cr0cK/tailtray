@@ -76,6 +76,9 @@ prints.
 
 - Background shares first, then foreground ones by session key in code-point order. Within each
   config, by port ascending, then host, then mount, both in code-point order.
+- A TCP share has no mount: a Web share and a TCP share on the same port and host list the Web
+  share first. Tailscale never writes such a config, since it refuses a Web share on a port that
+  serves TCP.
 
 ## Shared section
 
