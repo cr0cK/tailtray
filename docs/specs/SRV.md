@@ -63,7 +63,9 @@ prints.
 | TCP | `<host>:<port>` | `tcp://<host first label>:<port>` |
 
 - `:<port>` is left out for `https` on 443 and `http` on 80. `<path>` is the mount, left out when
-  it is `/`, and goes in as it is, never percent-encoded, like the `--set-path` that stops it.
+  it is `/`. In the URL, each segment of the mount between `/` is percent-encoded as
+  `encodeURIComponent` does, so `/a#b` copies as `/a%23b`; the label shows the mount as it is, and
+  `--set-path` takes it as it is.
   Examples: `http://workstation.tail1234.ts.net:4173`,
   `https://workstation.tail1234.ts.net/docs`, label `https://workstation/docs`.
 - The target is the first non-empty field of the handler, in this order: `Proxy` as it is, `Path`
@@ -83,8 +85,8 @@ prints.
   read and no share, it is hidden.
 - A caption `Shared from this device`, then one row per share, in a scrolling area at most four
   share rows high; a fifth share scrolls.
-- A share row never widens the menu: its two text lines together take at most 22 em, and what is
-  longer is ellipsized as below.
+- A share row's width does not depend on its text: its two text lines sit in a column exactly
+  22 em wide, and what is longer is ellipsized as below.
 - A row has two lines. Left of them, the share's tile (see Menu colors); right of them, a copy
   icon and the stop button when the share has one, both centered on the row's height.
   - The first line is the label, then a **Public** pill when the share is public. A label that
@@ -218,7 +220,8 @@ menu, not only the Shared section.
   stop), two hosts on one port (no stop on either), each target kind and a handler with none,
   `null`, `{}`, an array, wrongly typed fields, ports `0`, `65536` and `abc` (ignored), and output
   Tailtray cannot read; the order, including the same shares in another JSON key order; the URL
-  and label of each kind; the stop command of each kind.
+  and label of each kind, with mounts `/a#b`, `/a?b`, `/50%` and `/é` encoded in the URL and raw in
+  the label and the stop command; the stop command of each kind.
 - `node --test` covers the engine (`tests/engine.test.js`): `serve status --json` runs after
   `get --json` in Connected only; it never runs in a refresh already known to be discarded; its
   failure or timeout keeps the refresh good and sets only the share failure; a `get --json`
@@ -251,7 +254,7 @@ menu, not only the Shared section.
   a device expanded, keeps the scroll position and the expanded device; on a 1920x1080 virtual
   monitor, with 30 shares and 60 devices, the footer is on screen or reachable by scrolling the
   menu, and both scrolling areas scroll with the wheel; a share whose target is a 200-character
-  path leaves the menu as wide as without it.
+  path leaves the menu as wide as a share whose target is `127.0.0.1:1`.
 - `npm run lint` and `make check` pass; CI is green; no `JS ERROR` or `JS WARNING` in the shell
   log.
 - Headless screenshots in Connected, Disconnected, Login required, and Unavailable, in the dark
@@ -296,8 +299,9 @@ menu, not only the Shared section.
 - **GNOME Shell 50**: `metadata.json` lists 49 and 50, but the acceptance runs on the 49 of the
   development machine; the rules about the click gesture and stylesheet loading are verified on 49
   and expected to hold on 50.
-- **Width**: the 22 em cap is a `max-width` on the share row's text column, with `x_expand` and
-  ellipsizing labels; a label's natural width alone would widen the menu.
+- **Width**: the share row's text column has `width: 22em` in the stylesheets, and its labels
+  ellipsize; `max-width` alone would not do, since `St.ThemeNode.adjust_preferred_width()` only
+  clamps the natural width, which still follows the text up to the cap.
 - **Styles**: the tiles, captions, and colors are style classes in two new stylesheets,
   `src/stylesheet-dark.css` and `src/stylesheet-light.css`, not inline styles. GNOME Shell 49
   loads the first of `stylesheet-<variant>.css` and `stylesheet.css` that exists, the variant
