@@ -74,12 +74,11 @@ export function stopArguments(share) {
     return ['serve', `--${share.scheme}=${share.port}`, `--set-path=${share.mount}`, 'off'];
 }
 
-// The shares of one config: `origin` is {foreground, session}. Hosts are compared in lower case
-// for the stop rule, since DNS names are case-insensitive.
+// The shares of one config: `origin` is {foreground, session}. Hosts are compared as they are
+// written: the CLI looks a share up under the exact host key it builds from this device's name.
 function sharesOfConfig(config, selfName, origin) {
     const tcp = isObject(config.TCP) ? config.TCP : {};
     const funnel = isObject(config.AllowFunnel) ? config.AllowFunnel : {};
-    const self = selfName.toLowerCase();
     const shares = [];
     // Hosts that serve a handler, by port, for the rule about a port shared with another host.
     const hostsByPort = new Map();
@@ -95,7 +94,7 @@ function sharesOfConfig(config, selfName, origin) {
         const handlers = entriesOf(isObject(entry) ? entry.Handlers : null);
         if (handlers.length > 0) {
             const hosts = hostsByPort.get(parsed.port) ?? new Set();
-            hosts.add(parsed.host.toLowerCase());
+            hosts.add(parsed.host);
             hostsByPort.set(parsed.port, hosts);
         }
         webEntries.push({key, ...parsed, https: forward.HTTPS === true, handlers});
@@ -115,8 +114,7 @@ function sharesOfConfig(config, selfName, origin) {
                 continue;
             }
             const port = showPort ? `:${entry.port}` : '';
-            const otherHost = [...(hostsByPort.get(entry.port) ?? [])]
-                .some(host => host !== entry.host.toLowerCase());
+            const otherHost = [...(hostsByPort.get(entry.port) ?? [])].some(host => host !== entry.host);
             shares.push({
                 kind: 'web',
                 scheme,
@@ -129,7 +127,7 @@ function sharesOfConfig(config, selfName, origin) {
                 public: funnel[entry.key] === true,
                 terminated: false,
                 background: !origin.foreground,
-                canStop: !origin.foreground && entry.host.toLowerCase() === self && !otherHost,
+                canStop: !origin.foreground && entry.host === selfName && !otherHost,
             });
         }
     }
@@ -139,7 +137,7 @@ function sharesOfConfig(config, selfName, origin) {
             const port = parsePort(portKey);
             if (port === null || !isObject(value) || text(value.TCPForward) === '')
                 continue;
-            const otherHost = [...(hostsByPort.get(port) ?? [])].some(host => host !== self);
+            const otherHost = [...(hostsByPort.get(port) ?? [])].some(host => host !== selfName);
             shares.push({
                 kind: 'tcp',
                 scheme: '',
@@ -158,8 +156,10 @@ function sharesOfConfig(config, selfName, origin) {
     }
 
     return shares
+        // A Web and a TCP share on one port and host never meet in a config Tailscale writes: the
+        // Web one comes first, whatever the mounts.
         .sort((a, b) => a.port - b.port || compareCodePoints(a.host, b.host) ||
-            compareCodePoints(a.mount, b.mount) || (a.kind === b.kind ? 0 : a.kind === 'web' ? -1 : 1))
+            (a.kind === b.kind ? 0 : a.kind === 'web' ? -1 : 1) || compareCodePoints(a.mount, b.mount))
         .map(share => ({
             ...share,
             key: JSON.stringify([

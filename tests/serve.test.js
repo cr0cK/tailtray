@@ -153,9 +153,16 @@ test('a host other than this device\'s is listed without a stop', () => {
     assert.equal(share.canStop, false);
 });
 
-test('this device\'s name is matched without regard to case', () => {
-    const [share] = shares({TCP: {443: {HTTPS: true}}, Web: web('WorkStation.TAIL1234.ts.net', 443, {'/': {}})});
-    assert.equal(share.canStop, true);
+test('this device\'s name is matched as it is written, since the CLI looks the exact host key up', () => {
+    const upper = 'WorkStation.TAIL1234.ts.net';
+    const [other] = shares({TCP: {443: {HTTPS: true}}, Web: web(upper, 443, {'/': {}})});
+    assert.equal(other.canStop, false);
+    // Two spellings of the name on one port are two hosts: neither can be stopped.
+    const both = shares({
+        TCP: {443: {HTTPS: true}},
+        Web: {...web(SELF, 443, {'/': {}}), ...web(upper, 443, {'/': {}})},
+    });
+    assert.deepEqual(both.map(share => share.canStop), [false, false]);
 });
 
 test('two hosts on one port: neither has a stop', () => {
@@ -300,6 +307,14 @@ test('the order: background first, then foreground sessions, each by port, host,
     assert.deepEqual(order(shares(reversed(config))), expected);
     assert.deepEqual(
         shares(reversed(config)).map(share => share.key), shares(config).map(share => share.key));
+});
+
+test('a Web and a TCP share on one port and host: the Web one first, whatever the mounts', () => {
+    const list = shares({
+        TCP: {443: {HTTPS: true, TCPForward: '127.0.0.1:5432'}},
+        Web: web(SELF, 443, {'/': proxy('http://127.0.0.1:3000')}),
+    });
+    assert.deepEqual(list.map(share => share.kind), ['web', 'tcp']);
 });
 
 test('the order compares code points, not UTF-16 units', () => {

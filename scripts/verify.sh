@@ -1072,7 +1072,8 @@ menu_close
 # --- Shared from this device ------------------------------------------------------------------
 # The shares of this device, one entry per row, in the order the section shows them. Hosts are
 # laptop.tail1234.ts.net, the Self.DNSName of the fixtures.
-SHARES="[...$HL_EXT._shareEntries.values()]"
+# In the order the rows are shown, which is not the order they were made in.
+SHARES="$HL_EXT._sharesList._getMenuItems().map(row => [...$HL_EXT._shareEntries.values()].find(e => e.row === row))"
 share() { echo "$SHARES[$1]"; }
 share_labels() { shell_eval "$SHARES.map(e => e.label.text).join('|')"; }
 share_lines() { shell_eval "$SHARES.map(e => e.line.text).join('|')"; }
@@ -1096,6 +1097,11 @@ STOP_CONFIG='{
     "TCP": {"9443": {"HTTPS": true}},
     "Web": {"laptop.tail1234.ts.net:9443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}}}
 }'
+# A JavaScript expression: whether a label ellipsizes its end and its text is longer than the room
+# it was given.
+is_ellipsized() {
+    echo "(l => l.clutter_text.ellipsize === 3 && l.clutter_text.get_preferred_width(-1)[1] > l.width + 1)($1)"
+}
 wait_shares() { wait_model "m.shares !== null && m.shares.ok && m.shares.shares.length === $1"; }
 
 begin "Shared: the four shares in order, copying a row, no command"
@@ -1174,6 +1180,10 @@ check "the header switch and the settings switches are insensitive too" \
 check "the share rows stay sensitive" test "$(shell_eval "$SHARES.every(e => e.row.reactive)")" = true
 menu_shot "$SHOTS/menu-shared-stopping.png"
 set_clipboard untouched
+pointer_click "$(share 2).stop"
+sleep 0.5
+check "a click on an insensitive stop button copies nothing, stops nothing, and keeps the menu open" \
+    test "$(clipboard_text)|$(stop_calls)|$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = "untouched|--http=4173 --set-path=/ off,|true"
 shell_eval "$(share 2).row.activate(null); 'ok'" >/dev/null
 sleep 0.5
 check "a share row copies while the stop runs" test "$(clipboard_text)" = laptop.tail1234.ts.net:5432
@@ -1352,8 +1362,7 @@ refresh_now
 wait_shares 1
 menu_open
 short=$(shell_eval "$HL_EXT._indicator.menu.actor.get_transformed_size()[0] + '|' + $(share 0).row.width")
-check "the short target is not ellipsized" \
-    test "$(shell_eval "$(share 0).line.clutter_text.get_layout().is_ellipsized()")" = false
+check "the short target is not ellipsized" test "$(shell_eval "$(is_ellipsized "$(share 0).line")")" = false
 menu_close
 fake_shares 1 "/srv/$(printf 'long-directory-name/%.0s' {1..10})$(printf 'x%.0s' {1..20})"
 refresh_now
@@ -1361,7 +1370,7 @@ wait_model "m.shares.shares[0].target.length >= 200"
 menu_open
 long=$(shell_eval "$HL_EXT._indicator.menu.actor.get_transformed_size()[0] + '|' + $(share 0).row.width")
 check "the 200-character target is ellipsized on its second line" \
-    test "$(shell_eval "$(share 0).line.clutter_text.get_layout().is_ellipsized()")" = true
+    test "$(shell_eval "$(is_ellipsized "$(share 0).line")")" = true
 check "the menu and the row are as wide as with the short target ($short)" test "$long" = "$short"
 pointer_park
 menu_shot "$SHOTS/menu-shared-long-target.png"
@@ -1479,9 +1488,8 @@ PY
     refresh_now
     wait_shares 3
     menu_open
-    wait_for "$(share 0).line.clutter_text.get_layout().is_ellipsized()" 5 || true
     check "[$style] the second line of a long target is ellipsized" \
-        test "$(shell_eval "$(share 0).line.clutter_text.get_layout().is_ellipsized()")" = true
+        test "$(shell_eval "$(is_ellipsized "$(share 0).line")")" = true
     menu_close
     shoot "colors-$style-connected"
     show stopped disconnected

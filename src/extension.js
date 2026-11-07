@@ -192,6 +192,33 @@ const SettingItem = GObject.registerClass(
     });
 
 /**
+ * A share row. While an action is pending its stop button is insensitive, which makes it
+ * non-reactive, so a press on it would fall through to the row and copy the URL: the row ignores
+ * a pointer press that lands inside the stop button's allocation. `stopButton` is set by the code
+ * that builds the row.
+ */
+const ShareItem = GObject.registerClass(
+    class ShareItem extends PopupMenu.PopupBaseMenuItem {
+        activate(event) {
+            if (this.stopButton?.visible && this._onStopButton(event))
+                return;
+            super.activate(event);
+        }
+
+        _onStopButton(event) {
+            const type = event?.type();
+            const pointer = type === Clutter.EventType.BUTTON_PRESS ||
+                type === Clutter.EventType.BUTTON_RELEASE || type === Clutter.EventType.TOUCH_END;
+            if (!pointer)
+                return false;
+            const [x, y] = event.get_coords();
+            const [left, top] = this.stopButton.get_transformed_position();
+            const [width, height] = this.stopButton.get_transformed_size();
+            return x >= left && x < left + width && y >= top && y < top + height;
+        }
+    });
+
+/**
  * The header row with a switch: the title, the state label, and the switch. Activating the row
  * toggles the switch without closing the menu, which PopupSwitchMenuItem.activate() would do
  * through its parent. setToggleState() emits `toggled` like a click does, so callers wrap
@@ -534,10 +561,11 @@ export default class TailtrayExtension extends Extension {
      * A share: its tile, two text lines (the label with the Public pill, and the target), the copy
      * icon, and the stop button. Activating the row copies the share's URL. The stop button is a
      * child of the row with a click gesture of its own: a press on it runs the stop and neither
-     * reaches the row's activation nor is swallowed (the pointer test of scripts/verify.sh).
+     * reaches the row's activation nor is swallowed (the pointer test of scripts/verify.sh); a
+     * press on it while it is insensitive does nothing (ShareItem).
      */
     _shareEntry(key) {
-        const row = new PopupMenu.PopupBaseMenuItem();
+        const row = new ShareItem();
         const entry = {key, row, url: '', stopArgs: null};
         addTile(row, 'teal', {icon: 'send-to-symbolic'});
 
@@ -570,6 +598,7 @@ export default class TailtrayExtension extends Extension {
         entry.spacer = new St.Widget({style_class: 'tailtray-stop-spacer'});
         row.add_child(entry.stop);
         row.add_child(entry.spacer);
+        row.stopButton = entry.stop;
 
         row.connect('activate', () => this._copy(entry.url));
         entry.stop.connect('clicked', () => {
@@ -629,11 +658,15 @@ export default class TailtrayExtension extends Extension {
         const first = this._sharesList._getMenuItems()[0];
         if (!first)
             return;
+        // The row's height is in stage pixels and a CSS length is scaled by the theme's scale
+        // factor, so the cap divides it out.
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
         const [, height] = first.get_preferred_height(-1);
         if (height <= 0 || height === this._sharesRowHeight)
             return;
         this._sharesRowHeight = height;
-        this._sharesScroll.style = `max-height: ${Math.ceil(height * SHARES_VISIBLE_ROWS)}px;`;
+        this._sharesScroll.style =
+            `max-height: ${Math.ceil(height / scale * SHARES_VISIBLE_ROWS)}px;`;
     }
 
     /**
