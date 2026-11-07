@@ -84,7 +84,9 @@ prints.
   pixels high.
 - A row has two lines. Left of them, the share's tile (see Menu colors); right of them, a copy
   icon and the stop button when the share has one, both centered on the row's height.
-  - The first line is the label, then a **Public** pill when the share is public.
+  - The first line is the label, then a **Public** pill when the share is public. A label that
+    does not fit is ellipsized at its end; the pill, the copy icon, and the stop button always
+    stay whole.
   - The second line, dim and smaller, is `→ <target>`, ellipsized at its end when it does not
     fit. A share with no target has an empty second line.
 - Activating the row copies the share's URL, as TRY's Copying says.
@@ -239,6 +241,8 @@ menu, not only the Shared section.
 - `scripts/screenshots.sh` regenerates every screenshot of `docs/screenshots/`, since Menu colors
   changes all of them, and adds `docs/screenshots/menu-shared.png`; the README shows it, and
   AGENTS.md's layout table lists `src/serve.js` and the two stylesheets.
+- The zip `make check` builds holds `stylesheet-dark.css` and `stylesheet-light.css`
+  (`unzip -l`).
 
 **Technical notes**
 - See TRY-P1 for the subprocess, menu, and headless notes.
@@ -269,8 +273,9 @@ menu, not only the Shared section.
   loads the first of `stylesheet-<variant>.css` and `stylesheet.css` that exists, the variant
   being `Main.getStyleVariant()`, and reloads it when the color scheme changes
   (`js/ui/extensionSystem.js`, `_loadExtensionStylesheet`); only one is loaded, so each file is
-  complete. `gnome-extensions pack` only takes `stylesheet.css` on its own: add
-  `$(wildcard $(SRC)/stylesheet-*.css)` to `EXTRA_SOURCES` in the Makefile. The accent color is
+  complete. `gnome-extensions pack` takes both variant stylesheets on its own
+  (`extensions-tool/src/command-pack.c`), so the Makefile needs no change; the acceptance checks
+  the zip. The accent color is
   `-st-accent-color` (GNOME 47 and later).
 - **Two-line rows**: TRY's Account submenu already shows two-line profile rows; reuse that
   vertical `St.BoxLayout` of two `St.Label`s, with `ellipsize` set on the second one's
