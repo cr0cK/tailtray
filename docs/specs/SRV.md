@@ -30,7 +30,8 @@ it in a browser. Where it and the rules disagree, the rules win.
 - When it fails, is killed by its time limit, or prints JSON Tailtray cannot read, the refresh
   still succeeds: the Shared section shows its failure line (see Shared section), and nothing else
   changes.
-- An output of `null` or `{}` is a good read with no share.
+- An output of `null` or `{}` is a good read with no share. Any other output that is not a JSON
+  object is JSON Tailtray cannot read.
 
 ## Shares
 
@@ -49,7 +50,9 @@ prints.
 - A share is **public** when `AllowFunnel["<host>:<port>"]` is true in the config it comes from.
 - Everything else in the config is ignored: a `Web` entry whose port has neither `HTTPS` nor
   `HTTP`, `Services` (Tailscale Services), and any other key.
-- Every field is optional; a missing one reads as empty or false.
+- Every field is optional. A missing field, or one of the wrong JSON type, reads as empty or
+  false. A port that is not an integer from 1 to 65535 makes its entry ignored, so no command ever
+  carries it.
 
 ### URL, label, and target
 
@@ -67,8 +70,8 @@ prints.
 
 ### Order
 
-- Background shares first, then foreground ones. Within each, by port ascending, then by mount in
-  code-point order.
+- Background shares first, then foreground ones by session key in code-point order. Within each
+  config, by port ascending, then host, then mount, both in code-point order.
 
 ## Shared section
 
@@ -85,9 +88,11 @@ prints.
 - The stop button is an icon button with the `media-playback-stop-symbolic` icon and the
   accessible name `Stop sharing <URL>`. Activating it stops the share (see Stopping a share); it
   does not copy.
-- Only a background share whose host is this device's MagicDNS name has a stop button. A
-  foreground share has none: it ends with the command running in its terminal. A share of
-  another host has none: the CLI only removes shares of this device's name.
+- Only a background share whose host is this device's MagicDNS name, and whose port no other
+  host of the background config serves, has a stop button. A foreground share has none: it ends
+  with the command running in its terminal. A share of another host has none: the CLI only
+  removes shares of this device's name. A share whose port another host also serves has none:
+  removing its port's last handler also removes `TCP["<port>"]`, which the other host needs.
 - When the read failed, the caption is followed by one insensitive dim row, `Could not read what
   this device shares`, and no other row.
 - A refresh while the menu is open updates the rows in place, as TRY's Reading the state says for
@@ -109,12 +114,19 @@ prints.
 | TCP | `tailscale serve --tcp=<port> off` |
 | TCP, TLS-terminated | `tailscale serve --tls-terminated-tcp=<port> off` |
 
-- A public share stops with the same command: when its port has no handler left, Tailscale
-  removes its Funnel too. Tailtray never runs `tailscale funnel`.
-- While it is pending, the row's target reads `Stopping…`. The follow-up shows what the read
-  returns: the row is gone when the stop worked, and back to its target otherwise.
+- A public share stops with the same command. Tailtray never runs `tailscale funnel`. For a Web
+  share, Tailscale removes the Funnel of its port with the port's last handler; for a TCP share it
+  leaves `AllowFunnel` in place, which shows nothing since the share is gone.
+- While it is pending, the row's target reads `Stopping…`. The follow-up renders the menu from its
+  own reads, with every rule above: the row is gone when the stop worked and back to its target
+  otherwise; the failure line replaces every row when its share read failed; the section is hidden
+  when the state is no longer Connected.
 - Stopping needs the user to be the Tailscale operator; when they are not, the error is the
   operator one of TRY's Errors.
+- When the config left after the stop still holds a `Path` handler or a Unix socket target,
+  Tailscale also requires local admin rights and refuses with `must be root, or be an operator and
+  able to run 'sudo tailscale' to serve a path or Unix socket`. Tailtray shows it as any other
+  error of TRY's Errors: its first line.
 - There is no confirmation: one activation stops the share.
 
 ## Security and privacy
@@ -147,21 +159,34 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
   `http` and on `https` (443 without port, another port with it), several mounts on one port, a TCP
   share and a TLS-terminated one, a public share, a foreground share, a `Web` entry whose port has
   neither `HTTPS` nor `HTTP` (ignored), `Services` (ignored), a host other than this device's (no
-  stop), each target kind and a handler with none, `null`, `{}`, and output Tailtray cannot read;
-  the order; the URL and label of each kind; the stop command of each kind.
+  stop), two hosts on one port (no stop on either), each target kind and a handler with none,
+  `null`, `{}`, an array, wrongly typed fields, ports `0`, `65536` and `abc` (ignored), and output
+  Tailtray cannot read; the order, including the same shares in another JSON key order; the URL
+  and label of each kind; the stop command of each kind.
+- `node --test` covers the engine (`tests/engine.test.js`): `serve status --json` runs after
+  `get --json` in Connected only; it never runs in a refresh already known to be discarded; its
+  failure or timeout keeps the refresh good and sets only the share failure; a `get --json`
+  failure followed by a good share read shows the shares; a share read delayed past an action
+  start or a disable changes nothing.
 - `scripts/fake-tailscale` answers `serve status --json` from `serve.json`, and `serve ... off`
-  removes the matching share from it (its port's `TCP` entry and `AllowFunnel` entry once the last
-  handler goes, as Tailscale does); `serve` honors `.sleep`, `.fail`, `.stdout` and `.noeffect`
-  like the other commands.
+  removes the matching share from it as Tailscale does: a Web share's last handler takes its port's
+  `TCP` and `AllowFunnel` entries with it; a TCP share removes only its `TCP` entry. The read and
+  the stop have their own control keys, `serve-status` and `serve-off`, honoring `.sleep`, `.fail`,
+  `.stdout` and `.noeffect` like the other commands.
 - Headless GNOME Shell with the fake (`scripts/verify.sh`): the section with a Web, a public, a
   TCP, and a foreground share, in that order; activating a row copies its URL (read back from
-  `St.Clipboard`) and closes the menu; the stop button of each kind calls exactly the command of
-  Stopping a share and keeps the menu open; the row shows `Stopping…` while a slow stop runs, with
-  every other action row and stop button insensitive; a failing stop shows its error after the
-  follow-up and the row keeps its target; a stop failing with `Access denied` shows the operator
-  error; a foreground share and another host's share have no stop button; a failing
+  `St.Clipboard`) and closes the menu; a real pointer click on the stop button of each kind,
+  through the Clutter virtual device of AGENTS.md, calls exactly the command of Stopping a share,
+  once, leaves the clipboard unchanged, and keeps the menu open; the row shows `Stopping…` while a
+  slow stop runs, with every other action row and stop button insensitive and the share rows still
+  copyable; a failing stop shows its error after the follow-up and the row keeps its target; a
+  failing stop whose follow-up share read also fails shows the error and the failure line; a stop
+  failing with `Access denied` shows the operator error, and one failing with the local admin text
+  shows that line; a foreground share and another host's share have no stop button; a failing
   `serve status` shows the failure line and keeps every other section; with no share the section
-  and its separator are hidden; in Disconnected `serve status` is never called (fake's log).
+  and its separator are hidden; in Disconnected `serve status` is never called (fake's log); 30
+  shares scroll within 280 pixels with the last row reachable, and a refresh while scrolled, with
+  a device expanded, keeps the scroll position and the expanded device.
 - `npm run lint` and `make check` pass; CI is green; no `JS ERROR` or `JS WARNING` in the shell
   log.
 - `scripts/screenshots.sh` adds `docs/screenshots/menu-shared.png`, the README shows it, and
@@ -187,7 +212,9 @@ Each plan is one PR, delivered in order. Its delivery is stamped on the tracking
 - **Operator**: the LocalAPI answers a non-operator write with 403 `serve config denied`; check
   that the CLI prints it as `Access denied: …`, so TRY's operator error matches. If it does not, the
   fake's failure text and the Errors rule are an outbox entry.
-- **Row**: a `PopupBaseMenuItem` with an `St.Button` for the stop button; the button's `clicked`
-  must not reach the item's `activate`, which would copy and close the menu.
+- **Row**: a `PopupBaseMenuItem` with an `St.Button` for the stop button. On GNOME Shell 49 and
+  50 the item reacts to presses through its own click gesture (`js/ui/popupMenu.js`), so a press
+  on the button must neither reach the item's `activate`, which would copy and close the menu, nor
+  be swallowed by the gesture; only the pointer test of the acceptance proves it.
 - **Public repository hygiene**: fixtures and screenshots use the fictional
   `workstation.tail1234.ts.net`, never a real tailnet.
