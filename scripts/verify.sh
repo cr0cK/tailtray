@@ -1164,7 +1164,7 @@ menu_close
 
 begin "Shared: a slow stop shows Stopping…, locks every action and every stop button, rows stay copyable"
 fake_serve "$STOP_CONFIG"
-fake_set serve-off.sleep 8
+fake_set serve-off.sleep 20
 refresh_now
 wait_shares 6
 menu_open
@@ -1189,7 +1189,7 @@ shell_eval "$(share 2).row.activate(null); 'ok'" >/dev/null
 sleep 0.5
 check "a share row copies while the stop runs" test "$(clipboard_text)" = laptop.tail1234.ts.net:5432
 check "and the stop was still pending when it did" test "$(model pending.kind)" = stop
-wait_model "m.pending === null" 15
+wait_model "m.pending === null" 25
 check "the stop worked: its row is gone" test "$(share_labels)" = \
     "https://laptop/docs|tcp://laptop:5432|https://other:7000|tcp://laptop:8443|https://laptop:9443"
 check "no error" test "$(model actionError)" = null
