@@ -23,3 +23,5 @@ delivery is recorded as stamps in its tracking issue.
 
 - `TRY`: the Tailtray panel menu: connection state, this device, accounts, exit nodes,
   Tailscale settings, other devices, and notifications. Tracking: #1.
+- `SRV`: what this device shares with Tailscale Serve and Funnel, shown in the menu, with copy
+  and stop. Builds on `TRY`. Tracking: #16.
