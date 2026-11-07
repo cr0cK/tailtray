@@ -126,9 +126,15 @@ test('the header has a switch only when connected, connecting, or disconnected',
     });
 });
 
-test('the header colours the label in the blocked states only', () => {
+test('the header colours the label green in Connected and yellow or red in the blocked states', () => {
     const colors = Object.values(STATES).map(state => headerModel(state, null, true).labelColor);
-    assert.deepEqual(colors, [null, null, null, 'warning', 'warning', 'error']);
+    assert.deepEqual(colors, ['success', null, null, 'warning', 'warning', 'error']);
+});
+
+test('the label stays green in Connected while a down is pending, and only there', () => {
+    assert.equal(headerModel(STATES.connected, {kind: 'down'}, true).labelColor, 'success');
+    assert.equal(headerModel(STATES.connected, {kind: 'down'}, true).label, 'Disconnecting…');
+    assert.equal(headerModel(STATES.disconnected, {kind: 'up'}, true).labelColor, null);
 });
 
 test('a pending up or down changes the label and locks the switch', () => {
@@ -171,9 +177,9 @@ test('the accessible name of the icon follows the label of a pending action', ()
     assert.equal(panelIconModel(STATES.disconnected, 'Connecting…').name, 'Tailscale: Connecting…');
 });
 
-test('the menu layout matches the spec table through P3', () => {
+test('the menu layout matches the spec tables', () => {
     const shown = id => Object.entries(sectionsOf(STATES[id])).filter(([, on]) => on).map(([name]) => name);
-    assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice', 'account', 'exitNode', 'settings', 'devices']);
+    assert.deepEqual(shown('connected'), ['identity', 'errorBlock', 'warnings', 'thisDevice', 'shared', 'account', 'exitNode', 'settings', 'devices']);
     assert.deepEqual(shown('connecting'), ['identity', 'errorBlock', 'warnings', 'account']);
     assert.deepEqual(shown('disconnected'), ['identity', 'errorBlock', 'warnings', 'account', 'settings']);
     assert.deepEqual(shown('login'), ['warnings', 'loginHelp']);
@@ -182,18 +188,25 @@ test('the menu layout matches the spec table through P3', () => {
 });
 
 test('separators sit between groups and never touch', () => {
-    const seps = (device, controls, devices) => separatorsOf({device, controls, devices});
-    const expected = (top, device, controls) => ({top, device, controls, footer: true});
-    assert.deepEqual(seps(true, true, true), expected(true, true, true));
-    assert.deepEqual(seps(true, true, false), expected(true, true, false));
-    assert.deepEqual(seps(false, true, true), expected(true, false, true));
-    assert.deepEqual(seps(true, false, true), expected(true, true, false));
-    assert.deepEqual(seps(false, false, true), expected(true, false, false));
-    assert.deepEqual(seps(false, true, false), expected(true, false, false));
-    assert.deepEqual(seps(true, false, false), expected(true, false, false));
-    assert.deepEqual(seps(false, false, false), expected(false, false, false));
-    // Without the devices argument, as before Other devices existed.
-    assert.deepEqual(separatorsOf({device: true, controls: true}), expected(true, true, false));
+    // The six groups are the header (always), This device, Shared, the controls, Other devices,
+    // and the footer (always): a separator sits between any two that show.
+    const seps = (device, shared, controls, devices) => separatorsOf({device, shared, controls, devices});
+    const expected = (top, device, shared, controls) => ({top, device, shared, controls, footer: true});
+    assert.deepEqual(seps(true, true, true, true), expected(true, true, true, true));
+    assert.deepEqual(seps(true, false, true, true), expected(true, true, false, true));
+    assert.deepEqual(seps(true, true, false, true), expected(true, true, true, false));
+    assert.deepEqual(seps(true, true, true, false), expected(true, true, true, false));
+    assert.deepEqual(seps(true, true, false, false), expected(true, true, false, false));
+    assert.deepEqual(seps(false, true, true, true), expected(true, false, true, true));
+    assert.deepEqual(seps(false, true, false, false), expected(true, false, false, false));
+    assert.deepEqual(seps(false, false, true, true), expected(true, false, false, true));
+    assert.deepEqual(seps(true, false, true, false), expected(true, true, false, false));
+    assert.deepEqual(seps(true, false, false, true), expected(true, true, false, false));
+    assert.deepEqual(seps(false, false, false, true), expected(true, false, false, false));
+    assert.deepEqual(seps(false, false, true, false), expected(true, false, false, false));
+    assert.deepEqual(seps(false, false, false, false), expected(false, false, false, false));
+    // Without the shared and devices arguments, as before they existed.
+    assert.deepEqual(separatorsOf({device: true, controls: true}), expected(true, true, false, false));
 });
 
 test('connected through an exit node has the arrow glyph, whatever the exit node does', () => {

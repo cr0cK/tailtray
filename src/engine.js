@@ -1,5 +1,7 @@
 import {parseProfiles} from './accounts.js';
+import {magicDnsName} from './devices.js';
 import {describeFailure} from './errors.js';
+import {readShares} from './serve.js';
 import {parsePrefs} from './settings.js';
 import {readStatus, sectionsOf, STATES} from './status.js';
 
@@ -47,6 +49,9 @@ export class Engine {
             status: null,
             // The boolean preferences of `tailscale get --json`, or null when it was not read.
             prefs: null,
+            // The shares of `serve status --json` ({ok, shares}, see serve.js), or null when it
+            // was not read: only a Connected refresh reads it.
+            shares: null,
             // The profiles of the last `switch --list --json` answer, or null when there was
             // none or it failed.
             accounts: {profiles: null, loading: false, failed: false},
@@ -106,8 +111,8 @@ export class Engine {
     /**
      * Runs one action, a `tailscale` command that changes the state. Returns false when it is
      * refused because another action is pending. `kind` is 'up' or 'down' for the header switch,
-     * 'switch' for an account and 'set' for a preference; `detail` (`{id}` or `{flag, value}`)
-     * is what the menu shows of its progress.
+     * 'switch' for an account, 'set' for a preference and 'stop' for a share; `detail` (`{id}`,
+     * `{flag, value}` or `{key}`) is what the menu shows of its progress.
      */
     runAction(kind, args, detail = {}) {
         if (this._destroyed || this._pending)
@@ -160,10 +165,20 @@ export class Engine {
             if (this._destroyed)
                 return;
         }
+        // The shares are read after the preferences, in Connected only, whether or not `get`
+        // worked, and again not at all once the refresh is known to be discarded.
+        let shares = null;
+        if (read.ok && counts() && sectionsOf(read.state).shared) {
+            shares = readShares(
+                await this._deps.run(['serve', 'status', '--json'], COMMAND_TIMEOUT_SECONDS),
+                magicDnsName(read.status?.Self));
+            if (this._destroyed)
+                return;
+        }
         this._refreshing = false;
 
         if (counts())
-            this._apply(read, prefs, followUp);
+            this._apply(read, prefs, shares, followUp);
 
         const queued = this._queued;
         this._queued = null;
@@ -177,7 +192,7 @@ export class Engine {
         });
     }
 
-    _apply(read, prefs, followUp) {
+    _apply(read, prefs, shares, followUp) {
         const model = this._model;
         const switched = followUp && this._pending?.kind === 'switch';
         if (read.ok) {
@@ -185,6 +200,7 @@ export class Engine {
             model.state = read.state;
             model.status = read.status;
             model.prefs = prefs;
+            model.shares = shares;
             model.refreshError = null;
             model.updatedAt = this._deps.now();
         } else {
@@ -192,6 +208,7 @@ export class Engine {
             model.state = STATES.unavailable;
             model.status = null;
             model.prefs = null;
+            model.shares = null;
             model.refreshError = describeFailure(read.failure, this._deps.userName);
         }
         if (followUp)

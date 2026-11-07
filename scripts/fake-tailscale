@@ -7,12 +7,15 @@ Replies come from files in that directory:
   status.json, get.json, switch.json   what `status --json`, `get --json`, and
                                        `switch --list --json` print, as the files were when
                                        the command started
+  serve.json                           what `serve status --json` prints (`null` without the file),
+                                       as the file was when the command started
   ping.out, ping.exit                  what `ping` prints on stdout and exits with (exit 0 by default);
                                        ping.err is what it prints on stderr
   ping.<address>.out, .exit, .err, .sleep   the same for one address, the last argument, taking
                                        the place of the files above
 Every call is appended to calls.log as one JSON line {t, key, args}, before it sleeps.
-Per command, KEY being status, get, switch-list, up, down, set, switch, or ping:
+Per command, KEY being status, get, switch-list, serve-status, serve-off, up, down, set, switch,
+or ping:
   KEY.sleep   seconds to sleep before answering (a killed command never takes effect); for ping,
               ping.<address>.sleep first
   KEY.fail    exit code to fail with after the sleep; KEY.stderr is what it prints (default
@@ -23,6 +26,13 @@ Effects: `up` sets BackendState to Running and `down` to Stopped in status.json,
 get.json (and, for `--exit-node=<address>`, moves `ExitNode` to the peer that has the address, or
 clears it for an empty value, in status.json), and `switch <id>` moves `selected` in switch.json. `up` with any flag fails, as a reminder
 that Tailtray never passes one.
+`serve ... off` (serve-off) removes a share of this device from serve.json as Tailscale does, never
+touching the Foreground configs. This device's name is `Self.DNSName` of status.json without its
+trailing dot. It takes `--https=<port>`, `--http=<port>`, `--tcp=<port>` or
+`--tls-terminated-tcp=<port>`, `--set-path=<mount>` for a Web flag, and the final `off`: a Web
+share's last handler takes `TCP[port]` and `AllowFunnel[host:port]` with it, a TCP share removes
+only `TCP[port]`. When nothing matches it exits 1 with Tailscale's error. Any other `serve`
+call is unknown.
 """
 import json
 import os
@@ -68,6 +78,10 @@ def command_key(arguments):
         return 'get'
     if arguments[:1] == ['switch']:
         return 'switch-list' if '--list' in arguments else 'switch'
+    if arguments[:2] == ['serve', 'status']:
+        return 'serve-status'
+    if arguments[:1] == ['serve'] and arguments[-1:] == ['off']:
+        return 'serve-off'
     if arguments[:1] in (['up'], ['down'], ['set'], ['ping']):
         return arguments[0]
     return 'unknown'
@@ -82,7 +96,7 @@ if key == 'unknown':
     sys.exit(2)
 
 # A read answers with the files as they were when it started, as a slow real command does.
-snapshot = {name: read(name) for name in ('status.json', 'get.json', 'switch.json')}
+snapshot = {name: read(name) for name in ('status.json', 'get.json', 'switch.json', 'serve.json')}
 # A ping answers per address when a file of that address exists, else from the shared files.
 ping_prefix = 'ping.%s' % args[-1] if key == 'ping' else None
 
@@ -110,6 +124,8 @@ elif key == 'get':
     sys.stdout.write(snapshot['get.json'] or '{}')
 elif key == 'switch-list':
     sys.stdout.write(snapshot['switch.json'] or '[]')
+elif key == 'serve-status':
+    sys.stdout.write(snapshot['serve.json'] or 'null\n')
 elif key == 'ping':
     sys.stdout.write(ping_file('out') or '')
     sys.stderr.write(ping_file('err') or '')
@@ -145,3 +161,40 @@ elif key == 'switch':
         for profile in data:
             profile['selected'] = profile['id'] == args[1]
     update_json('switch.json', select)
+elif key == 'serve-off':
+    def self_name():
+        status = json.loads(read('status.json') or '{}')
+        return str(status.get('Self', {}).get('DNSName', '')).rstrip('.')
+
+    def flag_value(*names):
+        for flag in args[1:]:
+            for name in names:
+                if flag.startswith('--%s=' % name):
+                    return name, flag.split('=', 1)[1]
+        return None, None
+
+    web_flag, web_port = flag_value('https', 'http')
+    tcp_flag, tcp_port = flag_value('tcp', 'tls-terminated-tcp')
+    _, mount = flag_value('set-path')
+    config = json.loads(read('serve.json') or 'null') or {}
+    if web_flag:
+        host_port = '%s:%s' % (self_name(), web_port)
+        handlers = config.get('Web', {}).get(host_port, {}).get('Handlers', {})
+        wanted = config.get('TCP', {}).get(web_port, {}).get(web_flag.upper())
+        if not wanted or (mount is not None and mount not in handlers) or not handlers:
+            print('error: failed to remove web serve: handler does not exist', file=sys.stderr)
+            sys.exit(1)
+        # Without --set-path, every mount of the port goes.
+        for name in list(handlers) if mount is None else [mount]:
+            del handlers[name]
+        if not handlers:
+            del config['Web'][host_port]
+            config.get('TCP', {}).pop(web_port, None)
+            config.get('AllowFunnel', {}).pop(host_port, None)
+    else:
+        entry = config.get('TCP', {}).get(tcp_port) if tcp_flag else None
+        if not entry or not entry.get('TCPForward'):
+            print('error: failed to remove TCP serve: serve config does not exist', file=sys.stderr)
+            sys.exit(1)
+        del config['TCP'][tcp_port]
+    write('serve.json', json.dumps(config, indent=2) + '\n')

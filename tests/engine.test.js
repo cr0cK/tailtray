@@ -18,22 +18,30 @@ const fail = (stderr, fields = {}) => ({exitCode: 1, stdout: '', stderr, ...fiel
 
 /**
  * An engine whose commands and timers the test resolves by hand. `get --json` answers by itself
- * with `env.get`, unless `manualGet` is set; those reads land in `gets`, not in `calls`.
+ * with `env.get`, unless `manualGet` is set; those reads land in `gets`, not in `calls`. So does
+ * `serve status --json` with `env.serve`, unless `manualServe` is set; its reads land in
+ * `serves`.
  */
-function setup({interval = 10, manualGet = false} = {}) {
+function setup({interval = 10, manualGet = false, manualServe = false} = {}) {
     const calls = [];
     const gets = [];
+    const serves = [];
     const timers = [];
     const changes = [];
     const good = [];
     let nextId = 1;
-    const env = {interval, now: 1_000_000, get: ok(GET)};
+    const env = {interval, now: 1_000_000, get: ok(GET), serve: ok('null')};
     const engine = new Engine({
         run: (args, timeout) => new Promise(resolve => {
             const name = args.join(' ');
             if (name === 'get --json' && !manualGet) {
                 gets.push({args, timeout});
                 resolve(env.get);
+                return;
+            }
+            if (name === 'serve status --json' && !manualServe) {
+                serves.push({args, timeout});
+                resolve(env.serve);
                 return;
             }
             calls.push({args, timeout, resolve, name});
@@ -70,7 +78,7 @@ function setup({interval = 10, manualGet = false} = {}) {
     };
     const pending = name => calls.filter(entry => entry.name === name && !entry.done).length;
     return {
-        engine, calls, gets, timers, changes, good, env, answer, pending, tick,
+        engine, calls, gets, serves, timers, changes, good, env, answer, pending, tick,
         model: () => engine.model,
     };
 }
@@ -740,4 +748,199 @@ test('nothing is passed on after destroy', async () => {
     t.engine.destroy();
     await t.answer('status --json', ok(STATUS.running));
     assert.equal(t.good.length, 0);
+});
+
+// --- Shares: tailscale serve status --json ----------------------------------------------------
+
+const SERVE = JSON.stringify({
+    TCP: {443: {HTTPS: true}, 5432: {TCPForward: '127.0.0.1:5432'}},
+    Web: {'laptop.tail1234.ts.net:443': {Handlers: {'/': {Proxy: 'http://127.0.0.1:3000'}}}},
+});
+const STOPPED = {timedOut: true, exitCode: -1, stdout: '', stderr: ''};
+const SERVE_STATUS = 'serve status --json';
+
+test('serve status --json runs after get --json, in Connected only', async () => {
+    const t = setup({manualGet: true, manualServe: true});
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.deepEqual(names(t), ['status --json', 'get --json']);
+    await t.answer('get --json', ok(GET));
+    // The calls run one after the other: serve waited for get.
+    assert.deepEqual(names(t), ['status --json', 'get --json', SERVE_STATUS]);
+    assert.equal(t.calls[2].timeout, 30);
+    assert.equal(t.model().loaded, false);
+    await t.answer(SERVE_STATUS, ok(SERVE));
+    assert.equal(t.model().loaded, true);
+    assert.equal(t.model().shares.ok, true);
+    assert.deepEqual(t.model().shares.shares.map(share => share.url),
+        ['https://laptop.tail1234.ts.net', 'laptop.tail1234.ts.net:5432']);
+});
+
+test('serve status --json never runs outside Connected, nor when status failed', async () => {
+    const answers = [
+        ok(STATUS.stopped), ok(STATUS.login), ok(STATUS.approval), ok(STATUS_CONNECTING),
+        fail('failed to connect to local tailscaled'), {missing: true, exitCode: -1, stdout: '', stderr: ''},
+        ok('not json'),
+    ];
+    for (const answer of answers) {
+        const t = setup({manualGet: true, manualServe: true});
+        t.engine.start();
+        await t.answer('status --json', answer);
+        if (t.pending('get --json'))
+            await t.answer('get --json', ok(GET));
+        assert.equal(names(t).includes(SERVE_STATUS), false);
+        assert.equal(t.model().shares, null);
+    }
+});
+
+test('the shares go away when the state is no longer Connected', async () => {
+    const t = setup();
+    t.env.serve = ok(SERVE);
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().shares.shares.length, 2);
+    t.timers[0].callback();
+    await t.answer('status --json', ok(STATUS.stopped));
+    assert.equal(t.model().shares, null);
+    t.timers[0].callback();
+    await t.answer('status --json', fail('failed to connect to local tailscaled'));
+    assert.equal(t.model().shares, null);
+});
+
+test('a refresh known to be discarded does not read the shares', async () => {
+    const t = setup({manualGet: true, manualServe: true});
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    await t.answer('get --json', ok(GET));
+    await t.answer(SERVE_STATUS, ok(SERVE));
+    // An action starts while status runs: neither get nor serve follow for that refresh.
+    t.engine.requestRefresh();
+    t.engine.runAction('down', ['down']);
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(names(t).filter(name => name === SERVE_STATUS).length, 1);
+    assert.equal(names(t).filter(name => name === 'get --json').length, 1);
+    // An action started while get runs: serve does not follow for that refresh either.
+    const u = setup({manualGet: true, manualServe: true});
+    u.engine.start();
+    await u.answer('status --json', ok(STATUS.running));
+    u.engine.runAction('set', ['set', '--shields-up=true'], {flag: 'shields-up', value: true});
+    await u.answer('get --json', ok(GET));
+    assert.equal(names(u).includes(SERVE_STATUS), false);
+});
+
+test('a failing, timed out or unreadable share read keeps the refresh good and sets only the failure', async () => {
+    const replies = [
+        fail('boom'), STOPPED, ok('not json'), ok('[]'), ok('"text"'), ok(''),
+        {missing: true, exitCode: -1, stdout: '', stderr: ''},
+    ];
+    for (const reply of replies) {
+        const t = setup();
+        t.env.serve = reply;
+        t.engine.start();
+        await t.answer('status --json', ok(STATUS.running));
+        assert.equal(t.model().loaded, true);
+        assert.equal(t.model().state.id, 'connected');
+        assert.equal(t.model().refreshError, null);
+        assert.equal(t.model().actionError, null);
+        assert.equal(t.model().prefs['accept-dns'], true);
+        assert.deepEqual(t.model().shares, {ok: false, shares: []});
+        assert.equal(t.good.length, 1);
+    }
+});
+
+test('null and {} are good reads with no share', async () => {
+    for (const reply of ['null', '{}']) {
+        const t = setup();
+        t.env.serve = ok(reply);
+        t.engine.start();
+        await t.answer('status --json', ok(STATUS.running));
+        assert.deepEqual(t.model().shares, {ok: true, shares: []});
+    }
+});
+
+test('a failing get followed by a good share read shows the shares', async () => {
+    const t = setup();
+    t.env.get = fail('boom');
+    t.env.serve = ok(SERVE);
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().prefs, null);
+    assert.equal(t.model().shares.ok, true);
+    assert.equal(t.model().shares.shares.length, 2);
+});
+
+test('a share read that answers after an action started changes nothing', async () => {
+    const t = setup({manualServe: true});
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    t.engine.runAction('set', ['set', '--shields-up=true'], {flag: 'shields-up', value: true});
+    await t.answer(SERVE_STATUS, ok(SERVE));
+    assert.equal(t.model().loaded, false);
+    assert.equal(t.model().shares, null);
+    assert.equal(t.good.length, 0);
+});
+
+test('a share read that answers after destroy changes nothing and starts nothing', async () => {
+    const t = setup({manualServe: true});
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    const seen = t.changes.length;
+    t.engine.destroy();
+    await t.answer(SERVE_STATUS, ok(SERVE));
+    assert.equal(t.changes.length, seen);
+    assert.equal(t.model().loaded, false);
+    assert.equal(t.timers.length, 0);
+    assert.equal(t.calls.filter(call => !call.done).length, 0);
+});
+
+test('stopping a share is an action: one command, then the follow-up, which shows the new shares', async () => {
+    const t = setup();
+    t.env.serve = ok(SERVE);
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    const [web] = t.model().shares.shares;
+    const args = ['serve', '--https=443', '--set-path=/', 'off'];
+    assert.equal(t.engine.runAction('stop', args, {key: web.key}), true);
+    assert.deepEqual(t.model().pending, {kind: 'stop', key: web.key});
+    // One action at a time.
+    assert.equal(t.engine.runAction('down', ['down']), false);
+    assert.equal(names(t).at(-1), args.join(' '));
+    t.env.serve = ok(JSON.stringify({TCP: {5432: {TCPForward: '127.0.0.1:5432'}}}));
+    await t.answer(args.join(' '), ok());
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().pending, null);
+    assert.equal(t.model().actionError, null);
+    assert.deepEqual(t.model().shares.shares.map(share => share.kind), ['tcp']);
+    // The stop counts as an action for the Connection lost notification.
+    assert.equal(t.good.at(-1).lastActionMs, 1_000_000);
+});
+
+test('a failing stop shows its error once the follow-up answered, and the row keeps its share', async () => {
+    const t = setup();
+    t.env.serve = ok(SERVE);
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    const args = ['serve', '--tcp=5432', 'off'];
+    t.engine.runAction('stop', args, {key: t.model().shares.shares[1].key});
+    await t.answer(args.join(' '), fail('Access denied: serve config denied'));
+    assert.equal(t.model().actionError, null);
+    await t.answer('status --json', ok(STATUS.running));
+    assert.equal(t.model().actionError.text, 'Tailtray needs you to be the Tailscale operator.');
+    assert.equal(t.model().shares.shares.length, 2);
+});
+
+test('a failing stop whose follow-up share read also fails shows the error and the failure', async () => {
+    const t = setup();
+    t.env.serve = ok(SERVE);
+    t.engine.start();
+    await t.answer('status --json', ok(STATUS.running));
+    const args = ['serve', '--tcp=5432', 'off'];
+    t.engine.runAction('stop', args, {key: t.model().shares.shares[1].key});
+    t.env.serve = fail('boom');
+    await t.answer(args.join(' '), fail(
+        "must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket\nmore"));
+    await t.answer('status --json', ok(STATUS.running));
+    assert.match(t.model().actionError.text, /^must be root, or be an operator and able to run 'sudo tailscale'/);
+    assert.equal(t.model().actionError.text.includes('more'), false);
+    assert.deepEqual(t.model().shares, {ok: false, shares: []});
 });
