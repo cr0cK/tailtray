@@ -1,6 +1,6 @@
 ---
 code: SRV
-status: draft
+status: active
 version: v0.2
 created: 2026-11-07
 builds-on: TRY
@@ -63,7 +63,8 @@ prints.
 | TCP | `<host>:<port>` | `tcp://<host first label>:<port>` |
 
 - `:<port>` is left out for `https` on 443 and `http` on 80. `<path>` is the mount, left out when
-  it is `/`. Examples: `http://workstation.tail1234.ts.net:4173`,
+  it is `/`, and goes in as it is, never percent-encoded, like the `--set-path` that stops it.
+  Examples: `http://workstation.tail1234.ts.net:4173`,
   `https://workstation.tail1234.ts.net/docs`, label `https://workstation/docs`.
 - The target is the first non-empty field of the handler, in this order: `Proxy` as it is, `Path`
   as it is, `Text` as `text`, `Redirect` as `redirect <Redirect>`. A handler with none has no
@@ -80,8 +81,10 @@ prints.
   six groups. The separator rule of Menu layout applies unchanged.
 - It shows in Connected only, when there is at least one share or the read failed. With a good
   read and no share, it is hidden.
-- A caption `Shared from this device`, then one row per share, in a scrolling area at most 280
-  pixels high.
+- A caption `Shared from this device`, then one row per share, in a scrolling area at most four
+  share rows high; a fifth share scrolls.
+- A share row never widens the menu: its two text lines together take at most 22 em, and what is
+  longer is ellipsized as below.
 - A row has two lines. Left of them, the share's tile (see Menu colors); right of them, a copy
   icon and the stop button when the share has one, both centered on the row's height.
   - The first line is the label, then a **Public** pill when the share is public. A label that
@@ -101,7 +104,9 @@ prints.
 - When the read failed, the caption is followed by one insensitive dim row with a grey
   `dialog-warning-symbolic` tile and `Could not read what this device shares`, and no other row.
 - A refresh while the menu is open updates the rows in place, as TRY's Reading the state says for
-  the other sections.
+  the other sections. A share keeps its row from one refresh to the next when its key is the
+  same: its config (`background`, or the `Foreground` session key), its kind (Web or TCP), its
+  host, its port, and, for a Web share, its mount. The pending stop is tied to that key too.
 
 ## Stopping a share
 
@@ -139,11 +144,13 @@ prints.
 These rules apply to the whole menu, in every state, and in both the light and the dark Shell
 styles.
 
-- **Header**: in Connected, the header label is green. The other states keep TRY's colors: yellow
+- **Header**: in Connected, the header label is green, whatever it reads, `Disconnecting…`
+  included while a `tailscale down` is pending. The other states keep TRY's colors: yellow
   for Login required and Approval required, red for Unavailable, the regular text color otherwise.
 - **Captions**: the captions `This device`, `Shared from this device`, `Connection`, and
   `Other devices` are bold, in the Shell's accent color. In the Other devices caption, only
-  `Other devices` takes it; ` · <online> of <total> online` stays dim.
+  `Other devices` takes it; ` · <online> of <total> online` stays dim. The caption
+  `No other devices` takes it whole.
 - **Connection caption**: the controls group (Account, Exit node, Settings) starts with the
   caption `Connection`, shown whenever the group shows.
 - **Tiles**: these rows start with a tile, a 24-pixel square with rounded corners, filled with a
@@ -188,6 +195,9 @@ styles.
 - Tailscale Services (`Services`, `--service`, `--tun`).
 - A panel icon badge or a notification about shares.
 - Showing shares in any state other than Connected.
+- Stopping a share from the keyboard: menu key navigation stops on rows, not on the stop button,
+  so a keyboard user copies a share but stops it with the CLI. The button keeps its accessible
+  name.
 
 ## Plans
 
@@ -218,9 +228,15 @@ menu, not only the Shared section.
   removes the matching share from it as Tailscale does: a Web share's last handler takes its port's
   `TCP` and `AllowFunnel` entries with it; a TCP share removes only its `TCP` entry. The read and
   the stop have their own control keys, `serve-status` and `serve-off`, honoring `.sleep`, `.fail`,
-  `.stdout` and `.noeffect` like the other commands.
-- Headless GNOME Shell with the fake (`scripts/verify.sh`): the section with a Web, a public, a
-  TCP, and a foreground share, in that order; activating a row copies its URL (read back from
+  `.stdout` and `.noeffect` like the other commands. Without `serve.json`, the read prints `null`.
+  The fake takes this device's name from `Self.DNSName` of `status.json`, without its trailing
+  dot, parses `--https=`, `--http=`, `--tcp=`, `--tls-terminated-tcp=`, `--set-path=` and the
+  final `off`, and, when nothing matches, exits 1 with `error: failed to remove web serve: handler
+  does not exist` for a Web flag and `error: failed to remove TCP serve: serve config does not
+  exist` for a TCP one, as Tailscale does.
+- Headless GNOME Shell with the fake (`scripts/verify.sh`): the section with a public Web share on
+  443, a Web share on 4173, a TCP share on 5432, and a foreground share on 8443, in that order, the
+  one Order gives; activating a row copies its URL (read back from
   `St.Clipboard`) and closes the menu; a real pointer click on the stop button of each kind,
   through the Clutter virtual device of AGENTS.md, calls exactly the command of Stopping a share,
   once, leaves the clipboard unchanged, and keeps the menu open; the row shows `Stopping…` while a
@@ -231,13 +247,20 @@ menu, not only the Shared section.
   shows that line; a foreground share and another host's share have no stop button; a failing
   `serve status` shows the failure line and keeps every other section; with no share the section
   and its separator are hidden; in Disconnected `serve status` is never called (fake's log); 30
-  shares scroll within 280 pixels with the last row reachable, and a refresh while scrolled, with
-  a device expanded, keeps the scroll position and the expanded device.
+  shares scroll within the height of four share rows with the last row reachable, and a refresh while scrolled, with
+  a device expanded, keeps the scroll position and the expanded device; on a 1920x1080 virtual
+  monitor, with 30 shares and 60 devices, the footer is on screen or reachable by scrolling the
+  menu, and both scrolling areas scroll with the wheel; a share whose target is a 200-character
+  path leaves the menu as wide as without it.
 - `npm run lint` and `make check` pass; CI is green; no `JS ERROR` or `JS WARNING` in the shell
   log.
 - Headless screenshots in Connected, Disconnected, Login required, and Unavailable, in the dark
   and the light Shell styles, show every tile, caption, and header color of Menu colors, and a
   share whose target is too long is ellipsized on its second line.
+- Through Eval, in both styles (the color scheme switched as `scripts/verify.sh` already does), the
+  theme node of each tile, caption, the header label in Connected, and the stop button returns
+  the background or foreground color Menu colors gives
+  (`get_theme_node().get_background_color()`, `get_foreground_color()`).
 - `scripts/screenshots.sh` regenerates every screenshot of `docs/screenshots/`, since Menu colors
   changes all of them, and adds `docs/screenshots/menu-shared.png`; the README shows it, and
   AGENTS.md's layout table lists `src/serve.js` and the two stylesheets.
@@ -264,10 +287,17 @@ menu, not only the Shared section.
 - **Operator**: the LocalAPI answers a non-operator write with 403 `serve config denied`; check
   that the CLI prints it as `Access denied: …`, so TRY's operator error matches. If it does not, the
   fake's failure text and the Errors rule are an outbox entry.
-- **Row**: a `PopupBaseMenuItem` with an `St.Button` for the stop button. On GNOME Shell 49 and
-  50 the item reacts to presses through its own click gesture (`js/ui/popupMenu.js`), so a press
-  on the button must neither reach the item's `activate`, which would copy and close the menu, nor
-  be swallowed by the gesture; only the pointer test of the acceptance proves it.
+- **Row**: a `PopupBaseMenuItem` with an `St.Button` for the stop button. The item reacts to
+  presses through its own `Clutter.ClickGesture` (`js/ui/popupMenu.js` of GNOME Shell 49), so a
+  press on the button must neither reach the item's `activate`, which would copy and close the
+  menu, nor be swallowed by the gesture; only the pointer test of the acceptance proves it. If the
+  button alone does not, the fallback is that the item's `activate(event)` returns early for an
+  event whose source is the button or inside its allocation, and the button runs the stop.
+- **GNOME Shell 50**: `metadata.json` lists 49 and 50, but the acceptance runs on the 49 of the
+  development machine; the rules about the click gesture and stylesheet loading are verified on 49
+  and expected to hold on 50.
+- **Width**: the 22 em cap is a `max-width` on the share row's text column, with `x_expand` and
+  ellipsizing labels; a label's natural width alone would widen the menu.
 - **Styles**: the tiles, captions, and colors are style classes in two new stylesheets,
   `src/stylesheet-dark.css` and `src/stylesheet-light.css`, not inline styles. GNOME Shell 49
   loads the first of `stylesheet-<variant>.css` and `stylesheet.css` that exists, the variant
