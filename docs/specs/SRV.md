@@ -1,6 +1,6 @@
 ---
 code: SRV
-status: active
+status: done
 version: v0.2
 created: 2026-11-07
 builds-on: TRY
