@@ -67,7 +67,8 @@ export function peerId(key, peer) {
  * (Mullvad exit nodes), online ones first, each group sorted by name. `detail` is the OS of an
  * online peer or how long ago an offline one was seen, `rows` its copyable values (see
  * deviceRows), `address` its first IPv4 address or '', and `canPing` whether it is online and
- * has one. The caption counts the listed devices.
+ * has one. The caption counts the listed devices; `title` is its first part, which the menu shows
+ * in the accent colour, and `count` the rest, which stays dim.
  */
 export function deviceList(status, nowMs) {
     const devices = peersOf(status)
@@ -90,9 +91,7 @@ export function deviceList(status, nowMs) {
         .sort((a, b) => Number(b.online) - Number(a.online) ||
             compareNames(a.name, b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const online = devices.filter(device => device.online).length;
-    return {
-        caption: devices.length === 0
-            ? 'No other devices' : `Other devices · ${online} of ${devices.length} online`,
-        devices,
-    };
+    const title = devices.length === 0 ? 'No other devices' : 'Other devices';
+    const count = devices.length === 0 ? '' : ` · ${online} of ${devices.length} online`;
+    return {caption: title + count, title, count, devices};
 }

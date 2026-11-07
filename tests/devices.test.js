@@ -102,12 +102,16 @@ test('deviceList counts the online devices among those it lists', () => {
         peer('mullvad-fr', {Location: {City: 'Paris'}}),
     ]), NOW);
     assert.equal(list.caption, 'Other devices · 2 of 3 online');
+    // Only the title takes the accent colour, the count stays dim.
+    assert.equal(list.title, 'Other devices');
+    assert.equal(list.count, ' · 2 of 3 online');
 });
 
 test('deviceList says No other devices when nothing is listed', () => {
-    assert.deepEqual(deviceList({Peer: {}}, NOW), {caption: 'No other devices', devices: []});
-    assert.deepEqual(deviceList({}, NOW), {caption: 'No other devices', devices: []});
-    assert.deepEqual(deviceList(null, NOW), {caption: 'No other devices', devices: []});
+    const empty = {caption: 'No other devices', title: 'No other devices', count: '', devices: []};
+    assert.deepEqual(deviceList({Peer: {}}, NOW), empty);
+    assert.deepEqual(deviceList({}, NOW), empty);
+    assert.deepEqual(deviceList(null, NOW), empty);
     const onlyMullvad = statusOf([peer('mullvad-fr', {Location: {City: 'Paris'}})]);
     assert.equal(deviceList(onlyMullvad, NOW).caption, 'No other devices');
 });

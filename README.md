@@ -21,6 +21,7 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
 <p align="center">
   <img src="docs/screenshots/menu-devices.png" alt="The Other devices list: online devices with their OS, offline ones dimmed with when they were last seen" width="32%">
   <img src="docs/screenshots/menu-devices-ping.png" alt="One device expanded: its name and addresses with copy icons, and a Ping row showing a direct result" width="32%">
+  <img src="docs/screenshots/menu-shared.png" alt="The Shared from this device section: a public Web share with its Public pill, a Web share, a TCP share, and a share started in a terminal, each with its target and a copy icon, and a stop button on the first three" width="32%">
 </p>
 
 ## Features
@@ -37,6 +38,12 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
   none, with an **Allow LAN access** switch. The panel icon gets an arrow while one is in use.
 - A **Settings** submenu with three switches: use Tailscale subnets, use Tailscale DNS, and block
   incoming connections.
+- A **Shared from this device** section with what Tailscale Serve and Funnel share from this
+  device: one row per URL or TCP port with its local target, and a **Public** mark on what Funnel
+  opens to the internet. A click copies the share's URL; its stop button stops the share (shares
+  started in a terminal without `--bg` have none, and Tailtray never starts or changes a share).
+- A colored menu: colored tiles on the rows, accent-colored captions, and a green status in
+  Connected, in the dark and the light Shell styles.
 - The other devices of the tailnet, online first, in a scrolling list. Each one expands to its name
   and addresses, each one click away from your clipboard, and a **Ping** that shows whether the
   device answers directly, through a relay, or not at all.
@@ -48,7 +55,8 @@ calls the `tailscale` command line, stores no credential, and never elevates pri
 
 - GNOME Shell 49 or 50 on Linux.
 - `tailscale` and `tailscaled`, version 1.104 or later.
-- To connect and disconnect from the menu, your user must be the Tailscale operator. Run once:
+- To connect and disconnect, and to stop a share, from the menu, your user must be the Tailscale
+  operator. Run once:
 
   ~~~sh
   sudo tailscale set --operator=$USER

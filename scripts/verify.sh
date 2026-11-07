@@ -172,7 +172,7 @@ wait_model "m.state.id === 'disconnected' && m.pending === null"
 check "clicking the row ran down" test "$(fake_calls | awk '$1=="up"||$1=="down"' | tr '\n' ',')" = "up up,down down,"
 check "the menu stays open after the second toggle" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
 check "no refresh ran a command" \
-    test "$(fake_calls | awk '$1!="status"&&$1!="get"&&$1!="switch-list"' | wc -l)" = 2
+    test "$(fake_calls | awk '$1!="status"&&$1!="get"&&$1!="serve-status"&&$1!="switch-list"' | wc -l)" = 2
 check "tailscale login was never called" test "$(fake_calls | awk '$1=="unknown"' | wc -l)" = 0
 
 refresh_now
@@ -190,7 +190,7 @@ check "copying closes the menu" test "$(shell_eval "$HL_EXT._indicator.menu.isOp
 check "copying shows the OSD" test "$(shell_eval "Main.osdWindowManager._osdWindows.some(w => w.visible)")" = true
 screenshot "$SHOTS/osd-copied.png"
 check "copying runs no command" \
-    test "$(fake_calls | awk '$1!="status"&&$1!="get"&&$1!="switch-list"&&$1!="up"&&$1!="down"' | wc -l)" = 0
+    test "$(fake_calls | awk '$1!="status"&&$1!="get"&&$1!="serve-status"&&$1!="switch-list"&&$1!="up"&&$1!="down"' | wc -l)" = 0
 sleep 2
 
 # --- Actions ----------------------------------------------------------------------------------
@@ -827,7 +827,7 @@ begin "Other devices: list, order, expanding, ping results"
 show_devices
 menu_open
 check "the caption counts the listed devices" \
-    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text")" = "Other devices · 4 of 6 online"
+    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text + $HL_EXT._devicesCountLabel.text")" = "Other devices · 4 of 6 online"
 check "online devices come first, each group by name; the Location peer is not listed" \
     test "$(dev_order)" = "home-router|laptop|paris-vps|phone|nas|tokyo-vps"
 check "an online device shows its OS, an offline one when it was last seen" \
@@ -919,7 +919,7 @@ check "the device is the same row, still expanded, with its result" \
     test "$(shell_eval "$(dev 2) === globalThis.__laptop && $(dev 2).body.actor.visible && $(dev 2).ping.resultLabel.text === 'direct · 7 ms'")" = true
 check "the list follows the new status" \
     test "$(dev_order)" = "aaa-new|home-router|laptop|phone|nas|paris-vps"
-check "the caption follows" test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text")" = "Other devices · 4 of 6 online"
+check "the caption follows" test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text + $HL_EXT._devicesCountLabel.text")" = "Other devices · 4 of 6 online"
 check "the menu is still open" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
 # An expanded device that vanishes takes its expansion and result with it.
 edit_status "del d['Peer']['nodekey:nDEV2']"
@@ -938,7 +938,7 @@ menu_open
 SCROLL="$HL_EXT._devicesScroll"
 check "the list holds the 60 devices" test "$(shell_eval "$HL_EXT._deviceEntries.size")" = 60
 check "the caption counts all of them" \
-    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text")" = "Other devices · 40 of 60 online"
+    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text + $HL_EXT._devicesCountLabel.text")" = "Other devices · 40 of 60 online"
 check "the list is at most 280 px high" test "$(shell_eval "$SCROLL.get_preferred_height(-1)[1]")" = 280
 check "its rows are far taller than that, so they scroll" \
     test "$(shell_eval "$SCROLL.vadjustment.upper > 5 * $SCROLL.vadjustment.page_size")" = true
@@ -1064,10 +1064,452 @@ refresh_now
 wait_model "m.state.id === 'connected' && Object.keys(m.status.Peer).length === 0"
 menu_open
 check "without peers the caption reads No other devices and there is no row" \
-    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text + '|' + $HL_EXT._devicesSection.actor.visible + '|' + $HL_EXT._deviceEntries.size")" = "No other devices|false|0"
+    test "$(shell_eval "$HL_EXT._devicesCaptionLabel.text + $HL_EXT._devicesCountLabel.text + '|' + $HL_EXT._devicesSection.actor.visible + '|' + $HL_EXT._deviceEntries.size")" = "No other devices|false|0"
 pointer_park
 menu_shot "$SHOTS/menu-devices-none.png"
 menu_close
+
+# --- Shared from this device ------------------------------------------------------------------
+# The shares of this device, one entry per row, in the order the section shows them. Hosts are
+# laptop.tail1234.ts.net, the Self.DNSName of the fixtures.
+SHARES="[...$HL_EXT._shareEntries.values()]"
+share() { echo "$SHARES[$1]"; }
+share_labels() { shell_eval "$SHARES.map(e => e.label.text).join('|')"; }
+share_lines() { shell_eval "$SHARES.map(e => e.line.text).join('|')"; }
+stop_calls() { fake_calls | awk '$1 == "serve-off"' | sed 's/^serve-off serve //' | tr '\n' ','; }
+set_clipboard() {
+    shell_eval "St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, '$1'); 'ok'" >/dev/null
+}
+# Six shares, in the order of the section: a public Web share on 443, Web on 4173, TCP on 5432,
+# a Web share of another host on 7000, a TLS-terminated TCP share on 8443, and a foreground share
+# on 9443.
+STOP_CONFIG='{
+  "TCP": {"443": {"HTTPS": true}, "4173": {"HTTP": true}, "5432": {"TCPForward": "127.0.0.1:5432"},
+          "7000": {"HTTPS": true},
+          "8443": {"TCPForward": "127.0.0.1:9000", "TerminateTLS": "laptop.tail1234.ts.net"}},
+  "Web": {
+    "laptop.tail1234.ts.net:443": {"Handlers": {"/docs": {"Path": "/srv/handbook/public"}}},
+    "laptop.tail1234.ts.net:4173": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:4173"}}},
+    "other.tail1234.ts.net:7000": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:7000"}}}},
+  "AllowFunnel": {"laptop.tail1234.ts.net:443": true},
+  "Foreground": {"session-1": {
+    "TCP": {"9443": {"HTTPS": true}},
+    "Web": {"laptop.tail1234.ts.net:9443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}}}
+}'
+wait_shares() { wait_model "m.shares !== null && m.shares.ok && m.shares.shares.length === $1"; }
+
+begin "Shared: the four shares in order, copying a row, no command"
+fake_serve
+refresh_now
+wait_shares 4
+menu_open
+check "the section lists the public Web share, the Web share, the TCP share and the foreground share" \
+    test "$(share_labels)" = "https://laptop/docs|http://laptop:4173|tcp://laptop:5432|https://laptop:8443"
+check "each share shows its target on a second line" test "$(share_lines)" = \
+    "→ /home/alex/projects/handbook/site/public|→ http://127.0.0.1:4173|→ 127.0.0.1:5432|→ http://127.0.0.1:3000"
+check "the menu shows the caption, the rows with the Public pill on the first, then Connection" \
+    test "$(menu_texts | grep -c 'Shared from this device|https://laptop/docs|Public|→ /home/alex/projects/handbook/site/public|http://laptop:4173|→ http://127.0.0.1:4173|tcp://laptop:5432|→ 127.0.0.1:5432|https://laptop:8443|→ http://127.0.0.1:3000|Connection|Account')" = 1
+check "only the public share has the pill" \
+    test "$(shell_eval "$SHARES.map(e => e.pill.visible).join()")" = "true,false,false,false"
+check "the stop buttons: the three background shares of this device have one, the foreground share none" \
+    test "$(shell_eval "$SHARES.map(e => e.stop.visible).join()")" = "true,true,true,false"
+check "the stop buttons are named after the URL" test "$(shell_eval "$(share 1).stop.accessible_name")" = \
+    "Stop sharing http://laptop.tail1234.ts.net:4173"
+check "the section sits between This device and Connection, with a separator before and after" \
+    test "$(shell_eval "$HL_EXT._separators.device.visible && $HL_EXT._separators.shared.visible && $HL_EXT._separators.top.visible")" = true
+pointer_park
+menu_shot "$SHOTS/menu-shared.png"
+for index in 0 1 2 3; do
+    urls=(https://laptop.tail1234.ts.net/docs http://laptop.tail1234.ts.net:4173 laptop.tail1234.ts.net:5432 https://laptop.tail1234.ts.net:8443)
+    set_clipboard untouched
+    menu_open
+    pointer_click "$(share $index).row"
+    sleep 0.5
+    check "activating row $index copies ${urls[$index]}" test "$(clipboard_text)" = "${urls[$index]}"
+    check "and closes the menu" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = false
+done
+check "copying ran no command besides the reads" \
+    test "$(fake_calls | awk '$1!="status"&&$1!="get"&&$1!="serve-status"&&$1!="switch-list"' | wc -l)" = 0
+
+begin "Shared: a real click on each stop button runs its command once and keeps the menu open"
+fake_serve "$STOP_CONFIG"
+refresh_now
+wait_shares 6
+check "the six shares: the other host's has no stop, nor the foreground one" \
+    test "$(shell_eval "$SHARES.map(e => e.stop.visible).join()")" = "true,true,true,false,true,false"
+menu_open
+set_clipboard untouched
+# https, then http, then plain TCP, then (the share of the other host now first) TLS-terminated TCP.
+expected=""
+for step in "0|--https=443 --set-path=/docs off" "0|--http=4173 --set-path=/ off" "0|--tcp=5432 off" "1|--tls-terminated-tcp=8443 off"; do
+    index=${step%%|*}
+    expected+="${step#*|},"
+    left=$(shell_eval "$SHARES.length")
+    pointer_click "$(share "$index").stop"
+    wait_model "m.pending === null && m.shares.shares.length === $((left - 1))" 10
+    check "a click on the stop button ran exactly: ${step#*|}" test "$(stop_calls)" = "$expected"
+    check "the menu stays open" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
+    check "the clipboard is unchanged" test "$(clipboard_text)" = untouched
+done
+check "the stopped shares are gone, the other host's and the foreground one remain" \
+    test "$(share_labels)" = "https://other:7000|https://laptop:9443"
+check "no tailscale funnel was ever run" test "$(fake_calls | awk '$1=="unknown"' | wc -l)" = 0
+menu_close
+
+begin "Shared: a slow stop shows Stopping…, locks every action and every stop button, rows stay copyable"
+fake_serve "$STOP_CONFIG"
+fake_set serve-off.sleep 4
+refresh_now
+wait_shares 6
+menu_open
+pointer_click "$(share 1).stop"
+sleep 1
+check "the stopped row reads Stopping… with no arrow" test "$(shell_eval "$(share 1).line.text")" = "Stopping…"
+check "the other rows keep their target" test "$(shell_eval "$(share 0).line.text + '|' + $(share 2).line.text")" = \
+    "→ /srv/handbook/public|→ 127.0.0.1:5432"
+check "every stop button is insensitive" \
+    test "$(shell_eval "$SHARES.filter(e => e.stop.visible).every(e => !e.stop.reactive)")" = true
+check "the header switch and the settings switches are insensitive too" \
+    test "$(shell_eval "!$HL_EXT._header.reactive && Object.values($HL_EXT._settingItems).every(item => !item.reactive)")" = true
+check "the share rows stay sensitive" test "$(shell_eval "$SHARES.every(e => e.row.reactive)")" = true
+menu_shot "$SHOTS/menu-shared-stopping.png"
+set_clipboard untouched
+shell_eval "$(share 2).row.activate(null); 'ok'" >/dev/null
+sleep 0.5
+check "a share row copies while the stop runs" test "$(clipboard_text)" = laptop.tail1234.ts.net:5432
+wait_model "m.pending === null" 10
+check "the stop worked: its row is gone" test "$(share_labels)" = \
+    "https://laptop/docs|tcp://laptop:5432|https://other:7000|tcp://laptop:8443|https://laptop:9443"
+check "no error" test "$(model actionError)" = null
+menu_close
+
+begin "Shared: a failing stop shows its error after the follow-up and the row keeps its target"
+fake_serve "$STOP_CONFIG"
+fake_set serve-off.fail 1
+fake_set serve-off.stderr "error: failed to remove web serve: handler does not exist"
+fake_set serve-off.sleep 3
+refresh_now
+wait_shares 6
+menu_open
+pointer_click "$(share 1).stop"
+sleep 0.6
+check "no error before the follow-up answered" test "$(model actionError)" = null
+wait_model "m.pending === null" 10
+check "the error is the command's first line" \
+    test "$(model actionError.text)" = "error: failed to remove web serve: handler does not exist"
+check "the row is back to its target" test "$(shell_eval "$(share 1).line.text")" = "→ http://127.0.0.1:4173"
+check "all six shares are still listed" test "$(shell_eval "$SHARES.length")" = 6
+check "the stop buttons are sensitive again" \
+    test "$(shell_eval "$SHARES.filter(e => e.stop.visible).every(e => e.stop.reactive)")" = true
+check "the menu stays open" test "$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = true
+sleep 0.5
+menu_shot "$SHOTS/menu-shared-stop-failed.png"
+menu_close
+
+begin "Shared: a failing stop whose follow-up share read also fails shows the error and the failure line"
+fake_serve "$STOP_CONFIG"
+fake_set serve-off.fail 1
+fake_set serve-off.stderr "error: failed to remove web serve: handler does not exist"
+fake_set serve-off.sleep 2
+refresh_now
+wait_shares 6
+menu_open
+pointer_click "$(share 1).stop"
+sleep 0.5
+fake_set serve-status.fail 1
+wait_model "m.pending === null" 10
+check "the error shows" test "$(model actionError.text)" = "error: failed to remove web serve: handler does not exist"
+check "the failure line replaces every row" \
+    test "$(shell_eval "$HL_EXT._sharesFailure.visible && !$HL_EXT._sharesSection.actor.visible && $HL_EXT._shareEntries.size === 0")" = true
+menu_close
+
+begin "Shared: a stop failing with Access denied shows the operator error, with the local admin text its first line"
+fake_serve "$STOP_CONFIG"
+fake_set serve-off.fail 1
+fake_set serve-off.stderr "Access denied: serve config denied"
+refresh_now
+wait_shares 6
+menu_open
+pointer_click "$(share 0).stop"
+wait_model "m.pending === null && m.actionError !== null" 10
+check "the error is the operator one" \
+    test "$(model actionError.text)" = "Tailtray needs you to be the Tailscale operator."
+check "it offers the command to copy" test "$(model actionError.command)" = "sudo tailscale set --operator=$(id -un)"
+check "the share keeps its row" test "$(shell_eval "$SHARES.length")" = 6
+menu_close
+fake_set serve-off.stderr "must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket"
+menu_open
+pointer_click "$(share 0).stop"
+wait_model "m.pending === null && m.actionError !== null" 10
+check "the local admin text is shown as it is" test "$(model actionError.text)" = \
+    "must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket"
+check "with no command to copy" test "$(model actionError.command)" = null
+menu_close
+
+begin "Shared: a failing or slow serve status shows the failure line and keeps every other section"
+fake_serve
+fake_devices
+fake_set serve-status.fail 1
+refresh_now
+wait_model "m.shares !== null && !m.shares.ok"
+menu_open
+check "the refresh is still good: Connected, no error" test "$(model state.id)$(model refreshError)$(model actionError)" = connectednullnull
+check "the caption is followed by the failure line and no row" \
+    test "$(menu_texts | grep -c 'Shared from this device|Could not read what this device shares|Connection')" = 1
+check "the failure line is insensitive" test "$(shell_eval "$HL_EXT._sharesFailure.reactive")" = false
+check "This device, Connection, Other devices and the preferences are all there" \
+    test "$(menu_texts | grep -c 'This device|laptop.tail1234.ts.net|4|100.64.0.1|6|fd7a:115c:a1e0::1|Shared from this device|Could not read what this device shares|Connection|Account|example.org|Exit node|None|Settings|Other devices|.*Refresh now|updated just now|Preferences')" = 1
+pointer_park
+menu_shot "$SHOTS/menu-shared-failed.png"
+menu_close
+fake_unset serve-status.fail
+shell_eval "GLib.setenv('TAILTRAY_TIMEOUT_SECONDS', '2', true); 'ok'" >/dev/null
+ext_reload
+wait_model "m.loaded"
+fake_set serve-status.sleep 60
+refresh_now
+wait_model "m.shares !== null && !m.shares.ok" 15
+check "a serve status past its time limit gives the failure line, nothing else changes" \
+    test "$(model state.id)$(model refreshError)$(model "prefs['accept-dns']")" = connectednulltrue
+check "and no tailscale child is left" test "$(pids_of_fake)" = 0
+shell_eval "GLib.unsetenv('TAILTRAY_TIMEOUT_SECONDS'); 'ok'" >/dev/null
+fake_unset serve-status.sleep
+fake_set serve-status.stdout "not json"
+ext_reload
+wait_model "m.shares !== null && !m.shares.ok"
+check "output Tailtray cannot read gives the failure line too" test "$(model shares.ok)" = false
+fake_unset serve-status.stdout
+
+begin "Shared: with no share the section and its separator are hidden"
+check "null (no serve.json): no section" test "$(shell_eval "!$HL_EXT._sharedCaption.visible && !$HL_EXT._sharesFailure.visible")" = true
+menu_open
+check "the menu has no Shared caption" test "$(menu_texts | grep -c 'Shared from this device')" = 0
+check "and the separator after it is hidden" test "$(shell_eval "!$HL_EXT._separators.shared.visible && $HL_EXT._separators.device.visible")" = true
+menu_close
+fake_serve '{}'
+refresh_now
+wait_model "m.shares !== null && m.shares.ok"
+menu_open
+check "{} is a good read with no share: hidden too" \
+    test "$(menu_texts | grep -c 'Shared from this device')$(shell_eval "$HL_EXT._separators.shared.visible")" = 0false
+menu_close
+
+begin "Shared: serve status is read in Connected only"
+check "Connected reads it" test "$(fake_count serve-status)" -ge 1
+: >"$TAILTRAY_FAKE_DIR/calls.log"
+fake_serve
+for state in "stopped disconnected" "needs-login login" "needs-approval approval" "connecting connecting"; do
+    show $state
+    refresh_now
+    sleep 0.5
+done
+check "no state but Connected ever calls it" test "$(fake_count serve-status)" = 0
+check "and none of them shows the section" test "$(shell_eval "!$HL_EXT._sharedCaption.visible")" = true
+show running connected
+wait_model "m.shares !== null"
+check "Connected again reads it" test "$(fake_count serve-status)" = 1
+shell_eval "GLib.setenv('PATH', '/nonexistent', true); 'ok'" >/dev/null
+ext_reload
+wait_model "m.state.id === 'unavailable'"
+check "Unavailable has no section either" test "$(shell_eval "!$HL_EXT._sharedCaption.visible")" = true
+shell_eval "GLib.setenv('PATH', '$PATH_WITH_FAKE', true); 'ok'" >/dev/null
+
+begin "Shared: 30 shares scroll within four rows, and a refresh keeps the scroll position and the open device"
+fake_shares 30
+fake_devices 4
+refresh_now
+wait_shares 30
+menu_open
+SHARES_SCROLL="$HL_EXT._sharesScroll"
+check "the list holds 30 rows" test "$(shell_eval "$HL_EXT._shareEntries.size")" = 30
+check "its height is four share rows" \
+    test "$(shell_eval "Math.abs($SHARES_SCROLL.height - 4 * $(share 0).row.height) <= 1")" = true
+check "the rows are far taller than the list, so they scroll" \
+    test "$(shell_eval "$SHARES_SCROLL.vadjustment.upper > 5 * $SHARES_SCROLL.vadjustment.page_size")" = true
+pointer_park
+menu_shot "$SHOTS/menu-shared-30-top.png"
+pointer_scroll "$SHARES_SCROLL" 45
+check "the wheel reaches the last row" \
+    test "$(shell_eval "$SHARES_SCROLL.vadjustment.value >= $SHARES_SCROLL.vadjustment.upper - $SHARES_SCROLL.vadjustment.page_size - 1")" = true
+check "the last row is inside the list" test "$(shell_eval "(([, top], [, height], [, listTop], [, listHeight]) =>
+    top >= listTop - 1 && top + height <= listTop + listHeight + 1)($(share 29).row.get_transformed_position(),
+    $(share 29).row.get_transformed_size(), $SHARES_SCROLL.get_transformed_position(),
+    $SHARES_SCROLL.get_transformed_size())")" = true
+pointer_park
+menu_shot "$SHOTS/menu-shared-30-bottom.png"
+shell_eval "$SHARES_SCROLL.vadjustment.value = 700; $HL_EXT._deviceEntries.get('nDEV1').row.activate(null); globalThis.__row = $(share 7).row; 'ok'" >/dev/null
+sleep 0.5
+check "a device is expanded" test "$(shell_eval "$HL_EXT._openDevice")" = nDEV1
+refresh_now
+sleep 1.5
+check "a refresh keeps the rows, the scroll position, and the expanded device" \
+    test "$(shell_eval "$(share 7).row === globalThis.__row && Math.round($SHARES_SCROLL.vadjustment.value) + '|' + $HL_EXT._openDevice")" = "700|nDEV1"
+menu_close
+
+begin "Shared: a 200-character target leaves the menu as wide as a short one"
+fake_shares 1 "127.0.0.1:1"
+refresh_now
+wait_shares 1
+menu_open
+short=$(shell_eval "$HL_EXT._indicator.menu.actor.get_transformed_size()[0] + '|' + $(share 0).row.width")
+check "the short target is not ellipsized" \
+    test "$(shell_eval "$(share 0).line.clutter_text.get_layout().is_ellipsized()")" = false
+menu_close
+fake_shares 1 "/srv/$(printf 'long-directory-name/%.0s' {1..10})$(printf 'x%.0s' {1..20})"
+refresh_now
+wait_model "m.shares.shares[0].target.length >= 200"
+menu_open
+long=$(shell_eval "$HL_EXT._indicator.menu.actor.get_transformed_size()[0] + '|' + $(share 0).row.width")
+check "the 200-character target is ellipsized on its second line" \
+    test "$(shell_eval "$(share 0).line.clutter_text.get_layout().is_ellipsized()")" = true
+check "the menu and the row are as wide as with the short target ($short)" test "$long" = "$short"
+pointer_park
+menu_shot "$SHOTS/menu-shared-long-target.png"
+menu_close
+
+# --- Menu colors ------------------------------------------------------------------------------
+# Colours as the theme returns them, as #rrggbb.
+HEX='const hex = c => "#" + [c.red, c.green, c.blue].map(v => v.toString(16).padStart(2, "0")).join("");'
+bg() { shell_eval "$HEX hex(($1).get_theme_node().get_background_color())"; }
+fg() { shell_eval "$HEX hex(($1).get_theme_node().get_foreground_color())"; }
+# expect_color bg|fg EXPRESSION COLOUR DESCRIPTION
+expect_color() {
+    local got
+    if [[ $1 == bg ]]; then got=$(bg "$2"); else got=$(fg "$2"); fi
+    check "$4 is $3" test "$got" = "$3"
+}
+
+# The tiles, captions, header label and stop button of the Connected menu in one Shell style:
+# $1 is dark or light, and the stylesheet of that style must be the one loaded.
+check_menu_colors() {
+    local style=$1 green=#33d17a stop=#ff7b63
+    if [[ $style == light ]]; then green=#26a269; stop=#c01c28; fi
+    expect_color bg "$HL_EXT._deviceItems.dns.tile" '#3584e4' "[$style] the MagicDNS tile"
+    expect_color bg "$HL_EXT._deviceItems.ipv4.tile" '#3584e4' "[$style] the IPv4 tile"
+    expect_color bg "$HL_EXT._deviceItems.ipv6.tile" '#3584e4' "[$style] the IPv6 tile"
+    expect_color bg "$(share 0).row.tile" '#e66100' "[$style] a public share's tile (orange)"
+    expect_color bg "$(share 1).row.tile" '#2190a4' "[$style] a background Web share's tile (teal)"
+    expect_color bg "$(share 2).row.tile" '#865e3c' "[$style] a background TCP share's tile (brown)"
+    expect_color bg "$(share 5).row.tile" '#77767b' "[$style] a foreground share's tile (grey)"
+    expect_color bg "$HL_EXT._accountMenu.tile" '#9141ac' "[$style] the Account tile"
+    expect_color bg "$HL_EXT._exitMenu.tile" '#e66100' "[$style] the Exit node tile"
+    expect_color bg "$HL_EXT._settingsMenu.tile" '#6f8396' "[$style] the Settings tile"
+    expect_color bg "$HL_EXT._refreshItem.tile" '#26a269' "[$style] the Refresh now tile"
+    expect_color bg "$HL_EXT._preferencesItem.tile" '#77767b' "[$style] the Preferences tile"
+    local caption
+    for caption in _deviceCaption _sharedCaption _connectionCaption; do
+        expect_color fg "$HL_EXT.$caption.captionLabel" '#3584e4' "[$style] the $caption caption"
+    done
+    expect_color fg "$HL_EXT._devicesCaptionLabel" '#3584e4' "[$style] the Other devices title"
+    check "[$style] the count after it is not in the accent colour" \
+        test "$(fg "$HL_EXT._devicesCountLabel")" != '#3584e4'
+    expect_color fg "$HL_EXT._header.stateLabel" "$green" "[$style] the header label in Connected"
+    expect_color fg "$(share 0).stop" "$stop" "[$style] the stop button"
+    check "[$style] every tile is 24 pixels square" \
+        test "$(shell_eval "[$HL_EXT._deviceItems.dns.tile, $(share 0).row.tile, $HL_EXT._accountMenu.tile].every(t => t.width === 24 && t.height === 24)")" = true
+}
+
+begin "Menu colors: the theme gives the colours of the spec in the dark and the light style"
+fake_serve "$STOP_CONFIG"
+fake_devices
+refresh_now
+wait_shares 6
+menu_open
+check_menu_colors dark
+pointer_park
+menu_shot "$SHOTS/menu-colors-dark.png"
+menu_close
+gsettings set org.gnome.desktop.interface color-scheme "'prefer-light'"
+sleep 2
+menu_open
+check_menu_colors light
+pointer_park
+menu_shot "$SHOTS/menu-colors-light.png"
+menu_close
+# The failure line's tile, and the header label while a down is pending, in the light style.
+fake_set serve-status.fail 1
+refresh_now
+wait_model "m.shares !== null && !m.shares.ok"
+expect_color bg "$HL_EXT._sharesFailure.tile" '#77767b' "[light] the failure line's tile"
+check "[light] the failure line's tile is dimmed with its insensitive row" \
+    test "$(shell_eval "$HL_EXT._sharesFailure.tile.opacity < 255")" = true
+fake_unset serve-status.fail
+fake_set down.sleep 3
+fake_set down.noeffect 1
+refresh_now
+wait_shares 6
+menu_open
+shell_eval "$HL_EXT._header.activate(null); 'ok'" >/dev/null
+sleep 1
+check "[light] the label reads Disconnecting…" test "$(pending_label)" = "Disconnecting…"
+expect_color fg "$HL_EXT._header.stateLabel" '#26a269' "[light] the header label while Disconnecting…, in Connected"
+wait_model "m.pending === null" 10
+menu_close
+gsettings set org.gnome.desktop.interface color-scheme "'prefer-dark'"
+sleep 2
+menu_open
+shell_eval "$HL_EXT._header.activate(null); 'ok'" >/dev/null
+sleep 1
+expect_color fg "$HL_EXT._header.stateLabel" '#33d17a' "[dark] the header label while Disconnecting…, in Connected"
+wait_model "m.pending === null" 10
+menu_close
+
+begin "Menu colors: the other states keep their header colours, and every state shows its tiles"
+for style in dark light; do
+    gsettings set org.gnome.desktop.interface color-scheme "'prefer-$style'"
+    sleep 2
+    warn=#f6d32d err=#ff7b63 green=#33d17a
+    if [[ $style == light ]]; then warn=#9c6e03 err=#c01c28 green=#26a269; fi
+    fake_serve '{"TCP": {"5432": {"TCPForward": "127.0.0.1:5432"}}}'
+    show running connected
+    wait_model "m.shares !== null"
+    # A long target, for the screenshot.
+    fake_serve "$(python3 - "$TAILTRAY_FAKE_DIR/status.json" <<'PY'
+import json, sys
+host = json.load(open(sys.argv[1]))['Self']['DNSName'].rstrip('.')
+long_path = '/srv/' + 'long-directory-name/' * 10 + 'x' * 20
+print(json.dumps({
+    'TCP': {'443': {'HTTPS': True}, '4173': {'HTTP': True}, '5432': {'TCPForward': '127.0.0.1:5432'}},
+    'Web': {host + ':443': {'Handlers': {'/docs': {'Path': long_path}}},
+            host + ':4173': {'Handlers': {'/': {'Proxy': 'http://127.0.0.1:4173'}}}},
+    'AllowFunnel': {host + ':443': True},
+}))
+PY
+)"
+    refresh_now
+    wait_shares 3
+    menu_open
+    wait_for "$(share 0).line.clutter_text.get_layout().is_ellipsized()" 5 || true
+    check "[$style] the second line of a long target is ellipsized" \
+        test "$(shell_eval "$(share 0).line.clutter_text.get_layout().is_ellipsized()")" = true
+    menu_close
+    shoot "colors-$style-connected"
+    show stopped disconnected
+    check "[$style] the header label in Disconnected is not green" \
+        test "$(fg "$HL_EXT._header.stateLabel")" != "$green"
+    check "[$style] Disconnected has the Connection caption and its tiles" \
+        test "$(shell_eval "$HL_EXT._connectionCaption.visible && $HL_EXT._accountMenu.visible && !$HL_EXT._exitMenu.visible && $HL_EXT._settingsMenu.visible")" = true
+    menu_open
+    expect_color bg "$HL_EXT._accountMenu.tile" '#9141ac' "[$style] the Account tile in Disconnected"
+    expect_color bg "$HL_EXT._settingsMenu.tile" '#6f8396' "[$style] the Settings tile in Disconnected"
+    menu_close
+    shoot "colors-$style-disconnected"
+    show needs-login login
+    expect_color fg "$HL_EXT._staticStateLabel" "$warn" "[$style] the header label in Login required"
+    shoot "colors-$style-login-required"
+    show needs-approval approval
+    expect_color fg "$HL_EXT._staticStateLabel" "$warn" "[$style] the header label in Approval required"
+    fake_set status.fail 1
+    fake_set status.stderr "failed to connect to local tailscaled; it doesn't appear to be running"
+    refresh_now
+    wait_model "m.state.id === 'unavailable'"
+    expect_color fg "$HL_EXT._staticStateLabel" "$err" "[$style] the header label in Unavailable"
+    shoot "colors-$style-unavailable"
+    fake_unset status.fail
+    fake_unset status.stderr
+done
+gsettings set org.gnome.desktop.interface color-scheme "'prefer-dark'"
+sleep 2
 
 # --- Reading the state ------------------------------------------------------------------------
 begin "Refresh rules"
@@ -1407,6 +1849,42 @@ wait_model "m.loaded"
 before=$(fake_count status)
 sleep 7.5
 check "the refresh timer follows it" test "$(fake_count status)" = $((before + 1))
+
+# --- A bigger screen --------------------------------------------------------------------------
+HL_MONITOR=1920x1080 shell_restart
+wait_model "m.loaded"
+begin "Shared: on a 1920x1080 screen with 30 shares and 60 devices the footer is reachable and both lists scroll"
+fake_shares 30
+fake_devices 54
+refresh_now
+wait_model "m.shares.shares.length === 30 && Object.keys(m.status.Peer).length > 60"
+menu_open
+check "the monitor is 1920x1080" test "$(shell_eval "global.stage.width + 'x' + global.stage.height")" = 1920x1080
+# The footer's bottom edge, relative to the screen.
+footer_bottom() {
+    shell_eval "(([, y], [, h]) => Math.ceil(y + h))($HL_EXT._preferencesItem.get_transformed_position(),
+        $HL_EXT._preferencesItem.get_transformed_size())"
+}
+if (($(footer_bottom) <= 1080)); then
+    footer_on_screen=true
+else
+    footer_on_screen=false
+fi
+pointer_park
+menu_shot "$SHOTS/menu-1080p-top.png"
+if [[ $footer_on_screen == false ]]; then
+    # The menu is taller than the screen: it scrolls, with the wheel over a row that is not in a list.
+    pointer_scroll "$HL_EXT._header" 40
+fi
+check "the footer is on screen, or reachable by scrolling the menu" test "$(footer_bottom)" -le 1080
+pointer_park
+menu_shot "$SHOTS/menu-1080p-bottom.png"
+for list in _sharesScroll _devicesScroll; do
+    shell_eval "$HL_EXT.$list.vadjustment.value = 0; 'ok'" >/dev/null
+    pointer_scroll "$HL_EXT.$list" 3
+    check "the wheel scrolls $list" test "$(shell_eval "$HL_EXT.$list.vadjustment.value > 50")" = true
+done
+menu_close
 
 check "the shell log has no JS ERROR or JS WARNING" assert_log_clean
 

@@ -14,6 +14,8 @@ HL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 HL_UUID=tailtray@cr0ck.github.io
 HL_SCHEMA=org.gnome.shell.extensions.tailtray
 HL_SHELL_PID=
+# The size of the virtual monitor; a scenario sets it before shell_restart for a bigger screen.
+HL_MONITOR=${HL_MONITOR:-1280x1200}
 # The extension instance, as a JavaScript expression for shell_eval.
 HL_EXT="Main.extensionManager.lookup('$HL_UUID').stateObj"
 # Eval has Main, Gio, GLib, and global, but not St or Clutter.
@@ -94,6 +96,33 @@ fake_count() {
     fake_calls | awk -v key="$1" '$1 == key' | wc -l
 }
 
+# fake_serve: puts what `serve status --json` prints in the fake's directory, from the fixture
+# without an argument or from the JSON text given.
+fake_serve() {
+    if (($# == 0)); then
+        cp "$HL_ROOT/tests/fixtures/serve.json" "$TAILTRAY_FAKE_DIR/serve.json"
+    else
+        printf '%s\n' "$1" >"$TAILTRAY_FAKE_DIR/serve.json"
+    fi
+}
+
+# fake_shares N [TARGET]: N background Web shares of this device, on https ports 8001 and up, each
+# with the target http://127.0.0.1:<port>, or TARGET when given.
+fake_shares() {
+    python3 - "$TAILTRAY_FAKE_DIR" "$1" "${2:-}" <<'PY'
+import json, sys
+directory, count, target = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+status = json.load(open(directory + '/status.json'))
+host = status['Self']['DNSName'].rstrip('.')
+config = {'TCP': {}, 'Web': {}}
+for i in range(count):
+    port = 8001 + i
+    config['TCP'][str(port)] = {'HTTPS': True}
+    config['Web']['%s:%d' % (host, port)] = {'Handlers': {'/': {'Proxy': target or 'http://127.0.0.1:%d' % port}}}
+open(directory + '/serve.json', 'w').write(json.dumps(config))
+PY
+}
+
 # Replaces the peers of the fake by the six devices and the Mullvad node, plus $1 bulk devices
 # (every third offline), with last seen times that are relative to now.
 fake_devices() {
@@ -153,7 +182,7 @@ JS
 
 shell_start() {
     gnome-shell --headless --wayland --no-x11 --wayland-display="$WAYLAND_DISPLAY" \
-        --virtual-monitor 1280x1200 >>"$WORK/shell.log" 2>&1 &
+        --virtual-monitor "$HL_MONITOR" >>"$WORK/shell.log" 2>&1 &
     HL_SHELL_PID=$!
     wait_for "Main.extensionManager.lookup('$HL_UUID')?.state === 1"
     wait_for "Main.layoutManager._startingUp === false"
@@ -298,6 +327,34 @@ pointer_click() {
         return [x + w / 2, y + h / 2].join(' ');
     })()")
     pointer_click_at $centre
+}
+
+# Scrolls the wheel by $3 notches (down by default, up with "up") at a point.
+pointer_scroll_at() {
+    local direction=DOWN
+    [[ ${4:-} == up ]] && direction=UP
+    shell_eval "globalThis.__pointer.notify_absolute_motion(GLib.get_monotonic_time(), $1, $2); 'moved'" \
+        >/dev/null
+    sleep 0.4
+    local _
+    for _ in $(seq "$3"); do
+        shell_eval "globalThis.__pointer.notify_discrete_scroll(GLib.get_monotonic_time(),
+            Clutter.ScrollDirection.$direction, Clutter.ScrollSource.WHEEL);
+            'scrolled'" >/dev/null
+        sleep 0.1
+    done
+    sleep 0.4
+}
+
+# Scrolls the wheel over the centre of an actor, given as a JavaScript expression.
+pointer_scroll() {
+    local centre
+    centre=$(shell_eval "(() => {
+        const [x, y] = ($1).get_transformed_position();
+        const [w, h] = ($1).get_transformed_size();
+        return [x + w / 2, y + h / 2].join(' ');
+    })()")
+    pointer_scroll_at $centre "${2:-3}" "${3:-down}"
 }
 
 # Moves the pointer away from the menu, so no row shows a hover highlight in a screenshot.
