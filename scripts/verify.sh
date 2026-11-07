@@ -1164,7 +1164,7 @@ menu_close
 
 begin "Shared: a slow stop shows Stopping…, locks every action and every stop button, rows stay copyable"
 fake_serve "$STOP_CONFIG"
-fake_set serve-off.sleep 4
+fake_set serve-off.sleep 8
 refresh_now
 wait_shares 6
 menu_open
@@ -1184,10 +1184,12 @@ pointer_click "$(share 2).stop"
 sleep 0.5
 check "a click on an insensitive stop button copies nothing, stops nothing, and keeps the menu open" \
     test "$(clipboard_text)|$(stop_calls)|$(shell_eval "$HL_EXT._indicator.menu.isOpen")" = "untouched|--http=4173 --set-path=/ off,|true"
+check "the stop is still pending" test "$(model pending.kind)" = stop
 shell_eval "$(share 2).row.activate(null); 'ok'" >/dev/null
 sleep 0.5
 check "a share row copies while the stop runs" test "$(clipboard_text)" = laptop.tail1234.ts.net:5432
-wait_model "m.pending === null" 10
+check "and the stop was still pending when it did" test "$(model pending.kind)" = stop
+wait_model "m.pending === null" 15
 check "the stop worked: its row is gone" test "$(share_labels)" = \
     "https://laptop/docs|tcp://laptop:5432|https://other:7000|tcp://laptop:8443|https://laptop:9443"
 check "no error" test "$(model actionError)" = null
@@ -1354,6 +1356,15 @@ refresh_now
 sleep 1.5
 check "a refresh keeps the rows, the scroll position, and the expanded device" \
     test "$(shell_eval "$(share 7).row === globalThis.__row && Math.round($SHARES_SCROLL.vadjustment.value) + '|' + $HL_EXT._openDevice")" = "700|nDEV1"
+# At a theme scale factor of 2 the CSS lengths double: the list is still four rows high.
+shell_eval "St.ThemeContext.get_for_stage(global.stage).scale_factor = 2; 'ok'" >/dev/null
+sleep 1.5
+refresh_now
+sleep 1.5
+check "at a scale factor of 2 the list is still four share rows high" \
+    test "$(shell_eval "Math.abs($SHARES_SCROLL.height - 4 * $(share 0).row.height) <= 2")" = true
+shell_eval "St.ThemeContext.get_for_stage(global.stage).scale_factor = 1; 'ok'" >/dev/null
+sleep 1
 menu_close
 
 begin "Shared: a 200-character target leaves the menu as wide as a short one"
@@ -1462,6 +1473,13 @@ sleep 1
 expect_color fg "$HL_EXT._header.stateLabel" '#33d17a' "[dark] the header label while Disconnecting…, in Connected"
 wait_model "m.pending === null" 10
 menu_close
+fake_set serve-status.fail 1
+refresh_now
+wait_model "m.shares !== null && !m.shares.ok"
+expect_color bg "$HL_EXT._sharesFailure.tile" '#77767b' "[dark] the failure line's tile"
+check "[dark] the failure line's tile is dimmed with its insensitive row" \
+    test "$(shell_eval "$HL_EXT._sharesFailure.tile.opacity < 255")" = true
+fake_unset serve-status.fail
 
 begin "Menu colors: the other states keep their header colours, and every state shows its tiles"
 for style in dark light; do
